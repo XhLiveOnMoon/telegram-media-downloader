@@ -218,3 +218,39 @@ async def test_link_and_direct_media_tasks_share_one_serial_worker(tmp_path):
 
     assert handled == [first_id, second_id]
     assert peak_active == 1
+
+
+
+@pytest.mark.asyncio
+async def test_user_cancellation_stops_one_task_but_worker_continues(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    cancelled_id = store.enqueue("message-link", "https://t.me/example/777")
+    next_id = store.enqueue("direct-media", '{"file_id":"opaque"}')
+    started = asyncio.Event()
+    handled = []
+
+    async def handler(task):
+        handled.append(task.task_id)
+        if task.task_id == cancelled_id:
+            started.set()
+            await asyncio.Future()
+        return "completed"
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    await asyncio.wait_for(started.wait(), timeout=2)
+    assert worker.cancel_task(cancelled_id) is True
+
+    for _ in range(100):
+        records = store.recent(limit=2)
+        states = {record.task_id: record.status for record in records}
+        if states.get(cancelled_id) == "cancelled" and states.get(next_id) == "completed":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    states = {record.task_id: record.status for record in store.recent(limit=2)}
+    assert states[cancelled_id] == "cancelled"
+    assert states[next_id] == "completed"
+    assert handled == [cancelled_id, next_id]
