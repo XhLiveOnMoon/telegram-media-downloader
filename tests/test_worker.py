@@ -299,3 +299,46 @@ async def test_worker_recovers_orphaned_task_after_state_write_failure(tmp_path)
     # the network retry budget; the handler is safely re-entered idempotently.
     assert task.attempts == 1
     assert handler_calls == 2
+
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_orphan_recovery_after_recovery_write_failure(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/9877")
+    assert store.claim_next().task_id == task_id
+
+    original_recover = store.recover_orphaned_downloads
+    recovery_calls = 0
+
+    def flaky_recover():
+        nonlocal recovery_calls
+        recovery_calls += 1
+        if recovery_calls == 1:
+            raise OSError("simulated temporary SQLite recovery failure")
+        return original_recover()
+
+    store.recover_orphaned_downloads = flaky_recover
+    handled = []
+
+    async def handler(task):
+        handled.append(task.task_id)
+        return "recovered.bin"
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    worker.needs_orphan_recovery = True
+
+    # A failed recovery must leave the recovery flag set. The next worker
+    # iteration must retry recovery before claim_next sees the orphaned row.
+    with pytest.raises(OSError, match="temporary SQLite recovery failure"):
+        await worker._run_once()
+
+    assert worker.needs_orphan_recovery is True
+    await worker._run_once()
+
+    [task] = store.recent()
+    assert recovery_calls == 2
+    assert handled == [task_id]
+    assert task.status == "completed"
+    assert task.detail == "recovered.bin"
+    assert task.attempts == 1

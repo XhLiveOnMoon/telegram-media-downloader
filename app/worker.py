@@ -111,6 +111,18 @@ class DownloadWorker:
                 await asyncio.sleep(5)
 
     async def _run_once(self) -> None:
+        # A previous state write and immediate recovery may both have failed.
+        # Retry orphan recovery before claim_next, which deliberately refuses
+        # to claim work while any task remains marked as downloading.
+        if self.needs_orphan_recovery:
+            recovered = self.store.recover_orphaned_downloads()
+            self.needs_orphan_recovery = False
+            if recovered:
+                logger.warning(
+                    "Recovered %s orphaned task(s) before resuming the queue",
+                    recovered,
+                )
+
         if self.pending_cancel_task_id is not None:
             cancelled_id = self.pending_cancel_task_id
             if not self.store.cancel_active(cancelled_id):
