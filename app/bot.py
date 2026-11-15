@@ -574,9 +574,9 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    if not await _auth_state_matches(state, AuthFlow.phone):
+    generation = await _current_auth_generation(svc, state, AuthFlow.phone)
+    if generation is None:
         return
-    generation = svc.auth_flow_generation
     phone = (message.text or "").strip()
     await _delete_sensitive_message(message)
     if generation != svc.auth_flow_generation:
@@ -625,9 +625,9 @@ async def auth_code(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    if not await _auth_state_matches(state, AuthFlow.code):
+    generation = await _current_auth_generation(svc, state, AuthFlow.code)
+    if generation is None:
         return
-    generation = svc.auth_flow_generation
     phone = svc.pending_phone
     code_hash = svc.pending_code_hash
     code = (message.text or "").replace(" ", "").strip()
@@ -681,9 +681,9 @@ async def auth_password(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    if not await _auth_state_matches(state, AuthFlow.password):
+    generation = await _current_auth_generation(svc, state, AuthFlow.password)
+    if generation is None:
         return
-    generation = svc.auth_flow_generation
     password = (message.text or "").strip()
     await _delete_sensitive_message(message)
     if generation != svc.auth_flow_generation:
@@ -840,12 +840,15 @@ async def direct_media(message: Message) -> None:
     await message.answer(response)
 
 
-async def _auth_state_matches(state: FSMContext, expected: State) -> bool:
-    """Ignore stale updates whose FSM state was cleared by a concurrent command."""
-    get_state = getattr(state, "get_state", None)
-    if get_state is None:
-        return True
-    return await get_state() == expected.state
+async def _current_auth_generation(
+    svc: BotService, state: FSMContext, expected: State
+) -> int | None:
+    """Read the FSM state and generation atomically against cancellation."""
+    async with svc.auth_state_lock:
+        get_state = getattr(state, "get_state", None)
+        if get_state is not None and await get_state() != expected.state:
+            return None
+        return svc.auth_flow_generation
 
 
 def build_dispatcher(settings: Settings, client: TelegramClient) -> Dispatcher:
