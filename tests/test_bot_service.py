@@ -728,6 +728,39 @@ async def test_incorrect_login_code_keeps_code_state_for_retry(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
+async def test_help_and_command_usage_escape_html_placeholders(monkeypatch):
+    from types import SimpleNamespace
+
+    import app.bot as bot_module
+
+    class Service:
+        def is_owner(self, message):
+            return True
+
+    class FakeMessage:
+        from_user = SimpleNamespace(id=123456)
+
+        def __init__(self):
+            self.answers = []
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    monkeypatch.setattr(bot_module, "get_service", lambda: Service())
+    message = FakeMessage()
+
+    await bot_module.start(message)
+    assert "&lt;message link&gt;" in message.answers[-1]
+    assert "&lt;task_id&gt;" in message.answers[-1]
+
+    await bot_module.cancel(message, object(), SimpleNamespace(args="not-an-id"))
+    assert message.answers[-1] == "Usage: /cancel &lt;task_id&gt;"
+
+    await bot_module.retry_task(message, SimpleNamespace(args=None))
+    assert message.answers[-1] == "Usage: /retry &lt;task_id&gt;"
+
+
+@pytest.mark.asyncio
 async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, monkeypatch):
     import asyncio
     from types import SimpleNamespace

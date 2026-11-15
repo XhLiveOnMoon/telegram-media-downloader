@@ -416,10 +416,10 @@ async def start(message: Message) -> None:
     await message.answer(
         "Telegram Media Downloader is ready.\n\n"
         "/auth — authorize your Telegram account\n"
-        "/download <message link> — queue a download\n"
+        "/download &lt;message link&gt; — queue a download\n"
         "/status — show service status\n"
         "/tasks — show recent download tasks\n"
-        "/retry <task_id> — retry a failed or cancelled task\n"
+        "/retry &lt;task_id&gt; — retry a failed or cancelled task\n"
         "/cancel [task_id] — cancel a task or the current interaction"
     )
 
@@ -743,7 +743,7 @@ async def cancel(
         try:
             task_id = int(command.args.strip())
         except ValueError:
-            await message.answer("Usage: /cancel <task_id>")
+            await message.answer("Usage: /cancel &lt;task_id&gt;")
             return
         if svc.worker is not None and svc.worker.cancel_task(task_id):
             await message.answer(f"已请求取消任务 #{task_id}。")
@@ -762,12 +762,12 @@ async def retry_task(message: Message, command: CommandObject) -> None:
     if not svc.is_owner(message):
         return
     if not command.args:
-        await message.answer("Usage: /retry <task_id>")
+        await message.answer("Usage: /retry &lt;task_id&gt;")
         return
     try:
         task_id = int(command.args.strip())
     except ValueError:
-        await message.answer("Usage: /retry <task_id>")
+        await message.answer("Usage: /retry &lt;task_id&gt;")
         return
     if svc.tasks.requeue(task_id):
         await message.answer(f"任务 #{task_id} 已重新加入下载队列。")
