@@ -73,7 +73,6 @@ def test_default_download_paths_are_telegram_scoped(monkeypatch):
     assert settings.incomplete_dir == Path("/downloads/incomplete/telegram")
 
 
-
 def test_data_directory_rejects_symlink_escape(tmp_path: Path):
     real_data = tmp_path / "real-state"
     real_data.mkdir()
@@ -90,7 +89,6 @@ def test_data_directory_rejects_symlink_escape(tmp_path: Path):
             complete_dir=tmp_path / "downloads" / "complete" / "telegram",
             incomplete_dir=tmp_path / "downloads" / "incomplete" / "telegram",
         )
-
 
 
 def test_data_directory_must_be_outside_download_mount(tmp_path: Path):

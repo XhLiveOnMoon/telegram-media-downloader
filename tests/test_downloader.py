@@ -462,7 +462,6 @@ def test_safe_filename_respects_utf8_filesystem_component_limit():
     assert len(filename.encode("utf-8")) <= 180
 
 
-
 @pytest.mark.asyncio
 async def test_auth_key_not_found_is_retried_as_ambiguous_transport_failure(tmp_path: Path):
     message = make_message()

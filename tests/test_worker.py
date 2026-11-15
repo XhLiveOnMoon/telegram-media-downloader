@@ -255,7 +255,6 @@ async def test_user_cancellation_stops_one_task_but_worker_continues(tmp_path):
     assert handled == [cancelled_id, next_id]
 
 
-
 @pytest.mark.asyncio
 async def test_worker_recovers_orphaned_task_after_state_write_failure(tmp_path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
@@ -301,7 +300,6 @@ async def test_worker_recovers_orphaned_task_after_state_write_failure(tmp_path)
     assert handler_calls == 2
 
 
-
 @pytest.mark.asyncio
 async def test_worker_retries_orphan_recovery_after_recovery_write_failure(tmp_path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
@@ -344,7 +342,6 @@ async def test_worker_retries_orphan_recovery_after_recovery_write_failure(tmp_p
     assert task.attempts == 1
 
 
-
 @pytest.mark.asyncio
 async def test_worker_shutdown_wins_over_racing_user_cancel(tmp_path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
@@ -379,7 +376,6 @@ async def test_worker_shutdown_wins_over_racing_user_cancel(tmp_path):
     assert task.attempts == 0
 
 
-
 @pytest.mark.asyncio
 async def test_permanent_task_error_fails_without_retry(tmp_path):
     from app.worker import PermanentTaskError
@@ -409,7 +405,6 @@ async def test_permanent_task_error_fails_without_retry(tmp_path):
     assert "missing required" in task.detail
 
 
-
 @pytest.mark.asyncio
 async def test_worker_does_not_log_unclassified_exception_message(tmp_path, caplog):
     secret = "bot-token-must-not-appear-in-logs"
@@ -436,7 +431,6 @@ async def test_worker_does_not_log_unclassified_exception_message(tmp_path, capl
     assert task.detail == "Internal error: RuntimeError"
 
 
-
 @pytest.mark.asyncio
 async def test_storage_unavailable_defers_task_without_consuming_attempts(tmp_path):
     from app.worker import StorageUnavailable
@@ -457,7 +451,6 @@ async def test_storage_unavailable_defers_task_without_consuming_attempts(tmp_pa
     assert task.status == "retry_wait"
     assert task.attempts == 0
     assert task.next_attempt_at is not None
-
 
 
 @pytest.mark.asyncio

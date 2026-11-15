@@ -309,7 +309,6 @@ async def test_unauthorized_session_keeps_auth_required_tasks_paused(tmp_path: P
     assert stored.status == "auth_required"
 
 
-
 @pytest.mark.parametrize(
     ("file_size", "expected"),
     [
@@ -407,7 +406,6 @@ async def test_transient_auth_network_errors_preserve_login_flow(
     assert service.pending_code_hash == pending[1]
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("file_size", [None, 0, -1, "1024", 1.5, True, 20 * 1024 * 1024 + 1])
 async def test_legacy_direct_media_without_valid_supported_size_fails_closed(
@@ -438,7 +436,6 @@ async def test_legacy_direct_media_without_valid_supported_size_fails_closed(
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
-
 
 
 @pytest.mark.asyncio
@@ -478,7 +475,6 @@ async def test_direct_media_rejects_path_components_from_persisted_payload(
     assert stored.status == "downloading"
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error_name", ["AuthKeyInvalidError", "SessionExpiredError"])
 async def test_authorization_probe_recognizes_expired_auth_key(tmp_path: Path, error_name):
@@ -491,7 +487,6 @@ async def test_authorization_probe_recognizes_expired_auth_key(tmp_path: Path, e
     service = BotService(make_settings(tmp_path), ExpiredClient())
 
     assert await service.is_authorized() is False
-
 
 
 @pytest.mark.asyncio
