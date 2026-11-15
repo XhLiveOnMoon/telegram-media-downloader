@@ -109,7 +109,6 @@ class BotService:
                 return False
             raise
 
-
     async def reconcile_authorization(self) -> tuple[bool, int]:
         """Requeue auth-blocked tasks if the persisted Telegram session is valid."""
         authorized = await self.is_authorized()
