@@ -12,7 +12,7 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
 from .config import Settings
-from .downloader import DownloadError, MediaDownloader
+from .downloader import AuthorizationRequiredError, DownloadError, MediaDownloader
 from .links import parse_message_link
 from .storage import prepare_directories, safe_filename, stable_partial_path
 from .task_store import DownloadTaskStore
@@ -259,6 +259,11 @@ async def download(message: Message, command: CommandObject) -> None:
         await progress.edit_text(
             f"Download completed ({len(paths)} file(s), task #{task_id}):\n{names}"
         )
+    except AuthorizationRequiredError as exc:
+        svc.tasks.interrupt(task_id, str(exc))
+        await progress.edit_text(
+            f"任务 #{task_id} 已暂停，Telegram 账号需要重新授权。完成 /auth 后会自动续传。"
+        )
     except DownloadError as exc:
         svc.tasks.fail(task_id, str(exc))
         await progress.edit_text(f"Download failed (task #{task_id}): {exc}")
@@ -388,6 +393,14 @@ async def recover_interrupted_tasks(bot) -> None:
                 f"任务 #{task.task_id} 已在重启后恢复完成："
                 + ", ".join(path.name for path in paths),
             )
+        except AuthorizationRequiredError as exc:
+            svc.tasks.interrupt(task.task_id, str(exc))
+            await bot.send_message(
+                svc.settings.owner_telegram_id,
+                f"任务 #{task.task_id} 因账号授权失效已暂停，临时文件已保留。"
+                "完成 /auth 后会自动续传。",
+            )
+            break
         except DownloadError as exc:
             svc.tasks.fail(task.task_id, str(exc))
             await bot.send_message(
