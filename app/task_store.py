@@ -111,14 +111,15 @@ class DownloadTaskStore:
             ).fetchall()
         return [DownloadTask(**dict(row)) for row in rows]
 
-    def mark_running(self, task_id: int) -> None:
-        """Mark a recovered task as running before attempting its replay."""
+    def mark_running(self, task_id: int) -> bool:
+        """Atomically claim an interrupted task before attempting its replay."""
         with self._connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 "UPDATE download_tasks SET status = 'running', detail = ?, updated_at = ? "
                 "WHERE id = ? AND status = 'interrupted'",
                 ("Automatically resumed after service restart", self._now(), task_id),
             )
+            return cursor.rowcount == 1
 
     def recent(self, limit: int = 10) -> list[DownloadTask]:
         with self._connect() as connection:
