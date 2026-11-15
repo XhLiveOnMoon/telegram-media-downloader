@@ -91,6 +91,9 @@ class DownloadTaskStore:
     def fail(self, task_id: int, detail: str) -> None:
         self._set_status(task_id, "failed", detail)
 
+    def interrupt(self, task_id: int, detail: str) -> None:
+        self._set_status(task_id, "interrupted", detail)
+
     def _set_status(self, task_id: int, status: str, detail: str) -> None:
         with self._connect() as connection:
             connection.execute(
