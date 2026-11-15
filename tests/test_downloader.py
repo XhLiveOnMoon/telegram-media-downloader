@@ -74,3 +74,32 @@ async def test_incomplete_download_keeps_partial_file_for_retry(tmp_path: Path):
 
     assert partial.exists()
     assert partial.stat().st_size == 1024
+
+
+@pytest.mark.asyncio
+async def test_transient_network_error_retries_from_partial_offset(tmp_path: Path):
+    message = make_message()
+    class FlakyClient:
+        def __init__(self):
+            self.offsets = []
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.offsets.append(offset)
+            if len(self.offsets) == 1:
+                yield b"a" * 4096
+                raise ConnectionError("temporary network disconnect")
+            yield b"b" * 4096
+
+    client = FlakyClient()
+    downloader = MediaDownloader(
+        client,
+        tmp_path / "complete",
+        tmp_path / "incomplete",
+        max_network_retries=2,
+        retry_base_delay=0.001,
+    )
+
+    result = await downloader._download_one(message)
+
+    assert client.offsets == [0, 4096]
+    assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
