@@ -149,6 +149,8 @@ class MediaDownloader:
         size = getattr(document, "size", None) if document else None
         if final.exists() and (not size or final.stat().st_size == size):
             os.chmod(final, 0o644)
+            with final.open("rb+") as stream:
+                os.fsync(stream.fileno())
             return final
 
         network_attempt = 0
@@ -198,6 +200,8 @@ class MediaDownloader:
                         f"Incomplete download ({actual_size}/{size} bytes); retry to resume."
                     )
                 os.chmod(partial, 0o644)
+                with partial.open("rb+") as stream:
+                    os.fsync(stream.fileno())
                 os.replace(partial, final)
                 self._sync_directory(self.complete_dir)
                 if partial.parent != self.complete_dir:
