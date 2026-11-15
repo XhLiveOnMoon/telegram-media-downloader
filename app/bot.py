@@ -7,12 +7,7 @@ from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
+from aiogram.types import CallbackQuery, Message
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
@@ -279,7 +274,8 @@ async def direct_media(message: Message) -> None:
                 await message.bot.download(file=file_id, destination=partial)
                 if file_size and partial.stat().st_size != file_size:
                     raise DownloadError(
-                        f"Downloaded file size mismatch ({partial.stat().st_size}/{file_size} bytes)."
+                        "Downloaded file size mismatch "
+                        f"({partial.stat().st_size}/{file_size} bytes)."
                     )
                 final.parent.mkdir(parents=True, exist_ok=True)
                 partial.replace(final)
