@@ -6,7 +6,8 @@ from app.task_store import DownloadTaskStore
 
 def test_task_lifecycle_is_persisted(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "state" / "tasks.sqlite3")
-    task_id = store.create("message-link", "https://t.me/example/123")
+    task_id = store.enqueue("message-link", "https://t.me/example/123")
+    assert store.claim_next().task_id == task_id
     store.complete(task_id, "video.mp4")
     [task] = store.recent()
     assert task.task_id == task_id
@@ -102,25 +103,26 @@ def test_global_cooldown_never_shortens(tmp_path: Path):
 def test_interrupted_tasks_can_be_recovered_once(tmp_path: Path):
     database = tmp_path / "tasks.sqlite3"
     first_instance = DownloadTaskStore(database)
-    task_id = first_instance.create("message-link", "https://t.me/example/789")
+    task_id = first_instance.enqueue("message-link", "https://t.me/example/789")
+    assert first_instance.claim_next().task_id == task_id
     restarted_instance = DownloadTaskStore(database)
 
-    [interrupted] = restarted_instance.interrupted()
+    [interrupted] = restarted_instance.recent()
     assert interrupted.task_id == task_id
     assert interrupted.status == "interrupted"
 
-    assert restarted_instance.mark_running(task_id) is True
-    assert restarted_instance.mark_running(task_id) is False
-    [recovered] = restarted_instance.recent()
+    recovered = restarted_instance.claim_next()
+    assert recovered.task_id == task_id
     assert recovered.status == "downloading"
+    assert recovered.attempts == 2
 
 
 def test_authorization_blocked_task_remains_recoverable(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
-    task_id = store.create("message-link", "https://t.me/example/100")
+    task_id = store.enqueue("message-link", "https://t.me/example/100")
     store.require_auth(task_id, "Telegram authorization required")
 
-    [task] = store.interrupted()
+    [task] = store.recent()
     assert task.task_id == task_id
     assert task.status == "auth_required"
     assert "authorization" in task.detail.lower()
@@ -136,10 +138,10 @@ def test_sqlite_uses_wal_journal_mode(tmp_path: Path):
 
 def test_failed_task_and_recent_limit(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
-    old_id = store.create("direct-media", "old.bin")
+    old_id = store.enqueue("direct-media", "old.bin")
     store.fail(old_id, "network error")
-    new_id = store.create("direct-media", "new.bin")
+    new_id = store.enqueue("direct-media", "new.bin")
     records = store.recent(limit=1)
     assert len(records) == 1
     assert records[0].task_id == new_id
-    assert records[0].status == "downloading"
+    assert records[0].status == "queued"
