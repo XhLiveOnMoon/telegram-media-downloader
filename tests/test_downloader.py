@@ -83,7 +83,7 @@ async def test_incomplete_download_keeps_partial_file_for_retry(tmp_path: Path):
     source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
     partial = stable_partial_path(tmp_path / "incomplete", source_key)
 
-    with pytest.raises(DownloadError, match="Incomplete download"):
+    with pytest.raises(TransientDownloadError, match="Partial data was kept"):
         await downloader._download_one(message)
 
     assert partial.exists()
