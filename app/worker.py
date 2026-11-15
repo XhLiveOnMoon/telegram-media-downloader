@@ -53,6 +53,11 @@ class DownloadWorker:
         self.cancel_requested = False
         self.local_cooldown_until = 0.0
 
+    def extend_local_cooldown(self, seconds: float) -> None:
+        self.local_cooldown_until = max(
+            self.local_cooldown_until, time.time() + max(0.0, seconds)
+        )
+
     def cancel_task(self, task_id: int) -> bool:
         """Cancel a queued task or request cancellation of the active download."""
         if (
@@ -125,9 +130,7 @@ class DownloadWorker:
             raise
         except FloodWait as exc:
             # Enforce the wait in memory immediately, even if SQLite is temporarily unavailable.
-            self.local_cooldown_until = max(
-                self.local_cooldown_until, time.time() + exc.seconds
-            )
+            self.extend_local_cooldown(exc.seconds)
             until = self.store.set_global_cooldown(exc.seconds)
             self.local_cooldown_until = max(self.local_cooldown_until, until)
             delay = max(0.0, until - time.time())
