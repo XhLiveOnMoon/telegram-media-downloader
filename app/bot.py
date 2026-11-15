@@ -103,10 +103,11 @@ async def tasks(message: Message) -> None:
         return
     lines = ["Recent download tasks:"]
     for record in records:
-        detail = f" — {record.detail}" if record.detail else ""
+        source = record.source[:100]
+        detail = f" — {record.detail[:100]}" if record.detail else ""
         lines.append(
             f"#{record.task_id} [{record.status}] {record.task_type}: "
-            f"{record.source}{detail}"
+            f"{source}{detail}"
         )
     await message.answer("\n".join(lines))
 
