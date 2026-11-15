@@ -11,6 +11,7 @@ A private, manually triggered Telegram media downloader. A Telegram Bot provides
 - Album-aware message download.
 - Directly sent or forwarded Bot media for files up to the standard Bot API download limit (20 MB).
 - Link-based downloads keep partial files in the HDD-backed incomplete directory and resume from the last 4 KiB-aligned byte offset. File data is fsynced every 8 MiB and again before finalization.
+- Expired Telegram file references are refreshed from the original message before resuming. Authorization failures pause the task instead of consuming network retries; successful reauthorization triggers recovery.
 - Completed files are atomically moved into the complete directory.
 - Persistent Telethon session stored in the data volume.
 - SQLite task history uses WAL mode and full synchronous commits on the SSD-backed application volume. Message-link tasks interrupted by a process/container restart are replayed automatically after Telegram authorization is available.
@@ -119,5 +120,5 @@ GitHub Actions runs lint, unit tests, and Python bytecode compilation on pushes 
 
 - Directly sent or forwarded media uses the standard Bot API download endpoint and is limited to 20 MB. For larger files, send the original message link with `/download` so Telethon downloads it through your authorized account.
 - Link-based downloads automatically retry transient network interruptions and short transfers up to five times with exponential backoff. Partial data is flushed to disk before retry. If all retries are exhausted, the task is marked failed but its partial file is retained; resend the same link to continue. Message-link tasks interrupted by a restart are automatically replayed from the persisted task ledger after the MTProto account is authorized. Direct Bot API media tasks cannot currently be replayed after restart because Bot API file identifiers are not persisted.
-- Downloads are serialized by default (`MAX_CONCURRENT_DOWNLOADS=1`) to keep session and disk behavior predictable.
+- Downloads are serialized by default (`MAX_CONCURRENT_DOWNLOADS=1`) to keep session and disk behavior predictable. Per-message file locks prevent two requests for the same source from writing the same partial file concurrently.
 - Authorization prompts are private-chat only. Use `/cancel` to abandon an in-progress login.
