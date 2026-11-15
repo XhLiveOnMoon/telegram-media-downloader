@@ -10,10 +10,10 @@ A private, manually triggered Telegram media downloader. A Telegram Bot provides
 - Public message links (`t.me/<channel>/<message_id>`) and private message links (`t.me/c/<channel_id>/<message_id>`), provided the authorized account can access the source.
 - Album-aware message download.
 - Directly sent or forwarded Bot media for files up to the standard Bot API download limit (20 MB).
-- Link-based downloads keep partial files in the incomplete directory and resume from the last aligned byte offset on retry.
+- Link-based downloads keep partial files in the HDD-backed incomplete directory and resume from the last 4 KiB-aligned byte offset. File data is fsynced every 8 MiB and again before finalization.
 - Completed files are atomically moved into the complete directory.
 - Persistent Telethon session stored in the data volume.
-- SQLite task history survives container restarts; tasks that were running during a restart are marked as interrupted.
+- SQLite task history uses WAL mode and full synchronous commits on the SSD-backed application volume. Message-link tasks interrupted by a process/container restart are replayed automatically after Telegram authorization is available.
 
 ## Requirements
 
@@ -89,7 +89,7 @@ Only the configured owner ID is allowed to use the Bot. The user account must al
     └── telegram/
 ```
 
-The service mounts only its own Telegram subdirectories. It does not mount or modify qBittorrent's directories.
+The service mounts only its own Telegram subdirectories. It does not mount or modify qBittorrent's directories. The SQLite database and Telethon session live under the project data directory (SSD); partial and completed media files live on the HDD.
 
 ## Security
 
@@ -114,6 +114,6 @@ GitHub Actions runs lint, unit tests, and Python bytecode compilation on pushes 
 ## Current limitations
 
 - Directly sent or forwarded media uses the standard Bot API download endpoint and is limited to 20 MB. For larger files, send the original message link with `/download` so Telethon downloads it through your authorized account.
-- Link-based downloads automatically retry transient network interruptions up to five times with exponential backoff, preserving the partial file and resuming from the last aligned byte offset. If all retries are exhausted, resend the same link to continue from the retained partial file. A SQLite task ledger records outcomes; interrupted jobs are not automatically restarted after a container/process restart yet.
+- Link-based downloads automatically retry transient network interruptions and short transfers up to five times with exponential backoff. Partial data is flushed to disk before retry. If all retries are exhausted, the task is marked failed but its partial file is retained; resend the same link to continue. Message-link tasks interrupted by a restart are automatically replayed from the persisted task ledger after the MTProto account is authorized. Direct Bot API media tasks cannot currently be replayed after restart because Bot API file identifiers are not persisted.
 - Downloads are serialized by default (`MAX_CONCURRENT_DOWNLOADS=1`) to keep session and disk behavior predictable.
 - Authorization prompts are private-chat only. Use `/cancel` to abandon an in-progress login.
