@@ -421,13 +421,49 @@ async def auth_password(message: Message, state: FSMContext) -> None:
 
 
 @router.message(F.chat.type == "private", Command("cancel"))
-async def cancel(message: Message, state: FSMContext) -> None:
+async def cancel(
+    message: Message, state: FSMContext, command: CommandObject
+) -> None:
     svc = get_service()
     if not svc.is_owner(message):
+        return
+    if command.args:
+        try:
+            task_id = int(command.args.strip())
+        except ValueError:
+            await message.answer("Usage: /cancel <task_id>")
+            return
+        if svc.worker is not None and svc.worker.cancel_task(task_id):
+            await message.answer(f"已请求取消任务 #{task_id}。")
+        else:
+            await message.answer(
+                f"任务 #{task_id} 当前不存在或已进入不可取消状态。"
+            )
         return
     await state.clear()
     svc.pending_phone = svc.pending_code_hash = None
     await message.answer("Current interaction cancelled.")
+
+
+@router.message(F.chat.type == "private", Command("retry"))
+async def retry_task(message: Message, command: CommandObject) -> None:
+    svc = get_service()
+    if not svc.is_owner(message):
+        return
+    if not command.args:
+        await message.answer("Usage: /retry <task_id>")
+        return
+    try:
+        task_id = int(command.args.strip())
+    except ValueError:
+        await message.answer("Usage: /retry <task_id>")
+        return
+    if svc.tasks.requeue(task_id):
+        await message.answer(f"任务 #{task_id} 已重新加入下载队列。")
+    else:
+        await message.answer(
+            f"任务 #{task_id} 不是失败或已取消状态，无法手动重试。"
+        )
 
 
 @router.message(F.chat.type == "private", Command("download"))
