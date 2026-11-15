@@ -565,7 +565,6 @@ async def test_direct_media_sqlite_failure_is_deferred_before_download(tmp_path:
     assert stored.status == "downloading"
 
 
-
 @pytest.mark.asyncio
 async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, monkeypatch):
     import asyncio
@@ -657,7 +656,6 @@ async def test_authorization_callback_rejects_non_private_chat(monkeypatch):
     assert callback.answers == [
         ("Please authorize through a private chat with the Bot.", True)
     ]
-
 
 
 @pytest.mark.asyncio
