@@ -264,6 +264,16 @@ class DownloadTaskStore:
             )
             return cursor.rowcount == 1
 
+    def resume_auth_required(self) -> int:
+        """Requeue authorization-blocked work after the owner completes /auth."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE download_tasks SET status='queued', detail=?, updated_at=? "
+                "WHERE status='auth_required'",
+                ("Requeued after Telegram authorization", self._now()),
+            )
+            return cursor.rowcount
+
     def interrupted(self, limit: int = 50) -> list[DownloadTask]:
         with self._connect() as connection:
             rows = connection.execute(
