@@ -234,7 +234,7 @@ async def start(message: Message) -> None:
         "/download <message link> — queue a download\n"
         "/status — show service status\n"
         "/tasks — show recent download tasks\n"
-        "/retry <task_id> — retry a failed or cancelled task\\n"
+        "/retry <task_id> — retry a failed or cancelled task\n"
         "/cancel [task_id] — cancel a task or the current interaction"
     )
 
