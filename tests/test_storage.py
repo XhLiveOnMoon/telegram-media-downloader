@@ -15,9 +15,17 @@ def test_reserve_incomplete_path_avoids_overwrite(tmp_path: Path):
     assert second.name == "clip-1.mp4.part"
 
 
-def test_stable_partial_path_is_reused_for_resume(tmp_path: Path):
-    first = stable_partial_path(tmp_path, "channel-1", "clip.mp4")
+def test_stable_partial_path_is_reused_only_for_same_source_identity(tmp_path: Path):
+    source_key = "channel-1-message-42-document-9001"
+    first = stable_partial_path(tmp_path, source_key)
     first.write_bytes(b"partial")
-    second = stable_partial_path(tmp_path, "channel-1", "clip.mp4")
+
+    second = stable_partial_path(tmp_path, source_key)
+    different_media = stable_partial_path(
+        tmp_path, "channel-1-message-42-document-9002"
+    )
+
     assert first == second
     assert second.read_bytes() == b"partial"
+    assert different_media != first
+    assert not different_media.exists()
