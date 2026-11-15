@@ -105,3 +105,41 @@ async def test_transient_network_error_retries_from_partial_offset(tmp_path: Pat
 
     assert client.offsets == [0, 4096]
     assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
+
+
+
+@pytest.mark.asyncio
+async def test_expired_file_reference_is_refreshed_before_resuming(tmp_path: Path):
+    message = make_message()
+
+    class FileReferenceExpiredError(Exception):
+        pass
+
+    class RefreshingClient:
+        def __init__(self):
+            self.offsets = []
+            self.refreshed = make_message()
+
+        async def get_messages(self, entity, ids):
+            return self.refreshed
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.offsets.append(offset)
+            if len(self.offsets) == 1:
+                yield b"a" * 4096
+                raise FileReferenceExpiredError("stale file reference")
+            yield b"b" * 4096
+
+    client = RefreshingClient()
+    downloader = MediaDownloader(
+        client,
+        tmp_path / "complete",
+        tmp_path / "incomplete",
+        max_network_retries=2,
+        retry_base_delay=0.001,
+    )
+
+    result = await downloader._download_one(message)
+
+    assert client.offsets == [0, 4096]
+    assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
