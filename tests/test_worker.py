@@ -124,7 +124,6 @@ async def test_transient_failure_uses_persistent_retry_schedule(tmp_path):
     assert task.next_attempt_at > time.time() + 100
 
 
-
 @pytest.mark.asyncio
 async def test_worker_shutdown_marks_active_task_interrupted(tmp_path):
     database = tmp_path / "tasks.sqlite3"
@@ -187,7 +186,6 @@ async def test_worker_stops_retrying_after_configured_attempt_limit(tmp_path):
     assert "retry limit" in task.detail.lower()
 
 
-
 @pytest.mark.asyncio
 async def test_link_and_direct_media_tasks_share_one_serial_worker(tmp_path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
@@ -218,7 +216,6 @@ async def test_link_and_direct_media_tasks_share_one_serial_worker(tmp_path):
 
     assert handled == [first_id, second_id]
     assert peak_active == 1
-
 
 
 @pytest.mark.asyncio
