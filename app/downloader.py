@@ -45,7 +45,7 @@ class MediaDownloader:
         complete_dir: Path,
         incomplete_dir: Path,
         max_concurrent_downloads: int = 1,
-        max_network_retries: int = 1,
+        max_network_retries: int = 0,
         retry_base_delay: float = 2.0,
     ) -> None:
         self.client = client
@@ -129,13 +129,16 @@ class MediaDownloader:
         if final.exists() and (not size or final.stat().st_size == size):
             return final
 
-        for attempt in range(self.max_network_retries + 1):
+        network_attempt = 0
+        reference_refreshes = 0
+        while True:
             try:
                 offset = partial.stat().st_size if partial.exists() else 0
                 if size and offset > size:
                     partial.unlink(missing_ok=True)
                     offset = 0
-                # Telegram file offsets are aligned to 4 KiB.
+
+                # Telegram file offsets must be aligned to 4 KiB.
                 aligned_offset = offset - (offset % 4096)
                 if aligned_offset != offset:
                     with partial.open("r+b") as stream:
@@ -162,7 +165,7 @@ class MediaDownloader:
                                     os.fsync(stream.fileno())
                                     since_checkpoint = 0
                         finally:
-                            # Flush every yielded byte before retrying or propagating errors.
+                            # Persist every yielded byte before retrying or propagating errors.
                             stream.flush()
                             os.fsync(stream.fileno())
                             self._sync_directory(partial.parent)
@@ -177,6 +180,7 @@ class MediaDownloader:
                 if partial.parent != self.complete_dir:
                     self._sync_directory(partial.parent)
                 return final
+
             except FloodWaitError:
                 # The durable worker owns the global cooldown and retry schedule.
                 raise
@@ -188,11 +192,16 @@ class MediaDownloader:
                         "Telegram account authorization expired during download. "
                         "Run /auth; the partial file has been retained."
                     ) from exc
+
                 if type(exc).__name__ in {
                     "FileReferenceExpiredError",
                     "FileReferenceInvalidError",
                     "FileReferenceEmptyError",
                 }:
+                    if reference_refreshes >= 1:
+                        raise DownloadError(
+                            "Telegram file reference remained invalid after one refresh."
+                        ) from exc
                     try:
                         refreshed = await self.client.get_messages(
                             entity or message.peer_id, ids=message.id
@@ -204,39 +213,53 @@ class MediaDownloader:
                             raise AuthorizationRequiredError(
                                 "Telegram account authorization expired while refreshing media."
                             ) from refresh_exc
+                        if isinstance(
+                            refresh_exc, (ConnectionError, OSError, asyncio.TimeoutError)
+                        ) or type(refresh_exc).__name__ in {
+                            "ServerError", "TimedOutError", "RpcCallFailError"
+                        }:
+                            raise TransientDownloadError(
+                                "Network failure while refreshing Telegram file reference."
+                            ) from refresh_exc
                         logger.warning(
                             "Could not refresh Telegram media reference for message %s: %s",
                             message.id,
                             type(refresh_exc).__name__,
                         )
                         refreshed = None
-                    if refreshed and refreshed.media:
-                        message = refreshed
-                        logger.info(
-                            "Refreshed expired Telegram media reference for message %s",
-                            message.id,
-                        )
-                        continue
-                    raise DownloadError(
-                        "Telegram file reference expired and the source message could not "
-                        "be refreshed. Check source access and submit the link again."
+                    if not refreshed or not refreshed.media:
+                        raise DownloadError(
+                            "Telegram file reference expired and the source message could not "
+                            "be refreshed. Check source access and submit the link again."
+                        ) from exc
+                    message = refreshed
+                    reference_refreshes += 1
+                    logger.info(
+                        "Refreshed expired Telegram media reference for message %s",
+                        message.id,
+                    )
+                    continue
+
+                if network_attempt >= self.max_network_retries:
+                    logger.warning(
+                        "Download failed for message %s after %s network retries: %s",
+                        message.id,
+                        network_attempt,
+                        type(exc).__name__,
+                    )
+                    raise TransientDownloadError(
+                        f"Network/download failed after {network_attempt + 1} attempts "
+                        f"({type(exc).__name__}: {exc}). Partial data was kept for resume."
                     ) from exc
 
-                if attempt >= self.max_network_retries:
-                    logger.exception("Media download failed for message %s", message.id)
-                    raise TransientDownloadError(
-                        f"Network/download failed after {attempt + 1} attempts "
-                        f"({type(exc).__name__}: {exc}). Partial data was kept; resend the same "
-                        "message link later to resume."
-                    ) from exc
-                delay = min(self.retry_base_delay * (2**attempt), 30.0)
+                delay = min(self.retry_base_delay * (2**network_attempt), 30.0)
+                network_attempt += 1
                 logger.warning(
                     "Download interrupted for message %s; retry %s/%s in %.1fs (%s)",
                     message.id,
-                    attempt + 1,
+                    network_attempt,
                     self.max_network_retries,
                     delay,
                     type(exc).__name__,
                 )
                 await asyncio.sleep(delay)
-        raise DownloadError("Download stopped unexpectedly.")
