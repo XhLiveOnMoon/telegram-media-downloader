@@ -62,9 +62,10 @@ async def main() -> None:
     await client.connect()
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     monitor_task: asyncio.Task | None = None
+    recovery_task: asyncio.Task | None = None
     try:
         dispatcher = build_dispatcher(settings, client)
-        await recover_interrupted_tasks(bot)
+        recovery_task = asyncio.create_task(recover_interrupted_tasks(bot))
         monitor_task = asyncio.create_task(
             monitor_authorization(bot, client, settings.owner_telegram_id)
         )
@@ -72,9 +73,13 @@ async def main() -> None:
             bot, allowed_updates=dispatcher.resolve_used_update_types()
         )
     finally:
-        if monitor_task is not None:
-            monitor_task.cancel()
-            await asyncio.gather(monitor_task, return_exceptions=True)
+        for task in (monitor_task, recovery_task):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (monitor_task, recovery_task) if task is not None),
+            return_exceptions=True,
+        )
         await bot.session.close()
         await client.disconnect()
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
