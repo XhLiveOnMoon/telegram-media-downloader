@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import logging
+import os
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -48,7 +49,10 @@ async def main() -> None:
         level=getattr(logging, settings.log_level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    # Session files, the task database, and the process lock contain account state.
+    os.umask(0o077)
+    settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    settings.data_dir.chmod(0o700)
     lock_file = (settings.data_dir / "service.lock").open("a+")
     try:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
