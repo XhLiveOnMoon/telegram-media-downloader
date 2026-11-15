@@ -37,6 +37,7 @@ Create the application and download directories. The Telegram container runs as 
 
 ```bash
 mkdir -p data
+chmod 700 data
 mkdir -p /data/media/downloads/complete/telegram
 mkdir -p /data/media/downloads/incomplete/telegram
 chown -R 1001:1001 data /data/media/downloads/complete/telegram /data/media/downloads/incomplete/telegram
