@@ -196,6 +196,7 @@ class MediaDownloader:
                     raise ConnectionError(
                         f"Incomplete download ({actual_size}/{size} bytes); retry to resume."
                     )
+                os.chmod(partial, 0o644)
                 os.replace(partial, final)
                 self._sync_directory(self.complete_dir)
                 if partial.parent != self.complete_dir:
