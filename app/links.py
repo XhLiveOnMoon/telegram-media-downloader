@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-
 _PUBLIC = re.compile(r"^/(?:(?:s)/)?(?P<username>[A-Za-z0-9_]{4,})/(?P<message_id>\d+)/?$")
 _PRIVATE = re.compile(r"^/c/(?P<channel_id>\d+)/(?P<message_id>\d+)/?$")
 
