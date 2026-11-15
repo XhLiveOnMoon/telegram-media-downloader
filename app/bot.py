@@ -198,7 +198,8 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         return
     svc.pending_phone = svc.pending_code_hash = None
     await state.clear()
-    await message.answer("Authorization successful. You can now use /download.")
+    await message.answer("Authorization successful. Checking interrupted downloads now.")
+    await recover_interrupted_tasks(message.bot)
 
 
 @router.message(AuthFlow.password, F.chat.type == "private", F.text, ~F.text.startswith("/"))
@@ -218,7 +219,8 @@ async def auth_password(message: Message, state: FSMContext) -> None:
         return
     svc.pending_phone = svc.pending_code_hash = None
     await state.clear()
-    await message.answer("Authorization successful. You can now use /download.")
+    await message.answer("Authorization successful. Checking interrupted downloads now.")
+    await recover_interrupted_tasks(message.bot)
 
 
 @router.message(F.chat.type == "private", Command("cancel"))
