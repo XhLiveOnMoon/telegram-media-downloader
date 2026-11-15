@@ -131,7 +131,7 @@ class BotService:
                     raise RetryableTaskError(
                         f"Bot API file size mismatch ({actual_size}/{file_size} bytes)"
                     )
-                with partial.open("rb") as stream:
+                with partial.open("rb+") as stream:
                     os.fsync(stream.fileno())
                 os.replace(partial, final)
                 self._sync_directory(final.parent)
