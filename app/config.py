@@ -20,7 +20,7 @@ class Settings:
     log_level: str = "INFO"
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         load_dotenv()
         required = ("BOT_TOKEN", "API_ID", "API_HASH", "OWNER_TELEGRAM_ID")
         missing = [key for key in required if not os.getenv(key)]
