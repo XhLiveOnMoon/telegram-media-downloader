@@ -32,14 +32,18 @@ The compose file follows this host layout:
 /data/media/downloads/incomplete/telegram/
 ```
 
-Create the application and download directories, then set ownership to UID/GID 1000 (the same account used by qBittorrent):
+Create the application and download directories. The Telegram container runs as the dedicated UID/GID 1001, separate from qBittorrent (UID/GID 1000):
 
 ```bash
 mkdir -p data
 mkdir -p /data/media/downloads/complete/telegram
 mkdir -p /data/media/downloads/incomplete/telegram
-chown -R 1000:1000 data /data/media/downloads/complete/telegram /data/media/downloads/incomplete/telegram
+chown -R 1001:1001 data /data/media/downloads/complete/telegram /data/media/downloads/incomplete/telegram
+chmod 755 /data/media/downloads /data/media/downloads/complete /data/media/downloads/incomplete
+chmod 755 /data/media/downloads/complete/qbittorrent /data/media/downloads/incomplete/qbittorrent
 ```
+
+The container mounts the downloads root once so incomplete-to-complete promotion stays on one mount and can use an atomic rename. It runs as UID 1001; the qBittorrent directories remain owned by UID 1000 and are not writable by this service. The application itself only writes under the two Telegram subdirectories.
 
 Configure secrets:
 
@@ -89,7 +93,7 @@ Only the configured owner ID is allowed to use the Bot. The user account must al
     └── telegram/
 ```
 
-The service mounts only its own Telegram subdirectories. It does not mount or modify qBittorrent's directories. The SQLite database and Telethon session live under the project data directory (SSD); partial and completed media files live on the HDD.
+The service sees the shared downloads root through one HDD mount so a completed file can be atomically renamed from incomplete to complete. It runs as UID 1001, separate from qBittorrent's UID 1000, and only writes under `complete/telegram` and `incomplete/telegram`. The SQLite database and Telethon session live under the project data directory (SSD); partial and completed media files live on the HDD.
 
 ## Security
 
