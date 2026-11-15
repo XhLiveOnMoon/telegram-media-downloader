@@ -518,7 +518,9 @@ async def auth_start(message: Message, state: FSMContext) -> None:
 async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
     svc = get_service()
     if not callback.message or callback.message.chat.type != "private":
-        await callback.answer("Please authorize through a private chat with the Bot.", show_alert=True)
+        await callback.answer(
+            "Please authorize through a private chat with the Bot.", show_alert=True
+        )
         return
     if not callback.from_user or callback.from_user.id != svc.settings.owner_telegram_id:
         await callback.answer("Not authorized", show_alert=True)
