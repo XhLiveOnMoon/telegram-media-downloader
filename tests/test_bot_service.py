@@ -1,0 +1,91 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from app.bot import BotService
+from app.config import Settings
+from app.task_store import DownloadTaskStore
+
+
+class FakeBot:
+    def __init__(self, content: bytes):
+        self.content = content
+        self.messages = []
+
+    async def download(self, *, file, destination):
+        Path(destination).write_bytes(self.content)
+        return destination
+
+    async def send_message(self, chat_id, text):
+        self.messages.append((chat_id, text))
+
+
+def make_settings(tmp_path: Path) -> Settings:
+    return Settings(
+        bot_token="test-token",
+        api_id=12345,
+        api_hash="test-hash",
+        owner_telegram_id=123456,
+        data_dir=tmp_path / "state",
+        complete_dir=tmp_path / "downloads" / "complete",
+        incomplete_dir=tmp_path / "downloads" / "incomplete",
+    )
+
+
+@pytest.mark.asyncio
+async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path):
+    content = b"telegram test media" * 128
+    settings = make_settings(tmp_path)
+    service = BotService(settings, client=object())
+    task_id = service.tasks.enqueue(
+        "direct-media",
+        json.dumps(
+            {
+                "file_id": "opaque-file-id",
+                "filename": "sample.bin",
+                "file_size": len(content),
+                "source_key": "bot-123-456",
+            }
+        ),
+    )
+    task = service.tasks.claim_next()
+    bot = FakeBot(content)
+
+    detail = await service.execute_task(task, bot)
+
+    final = settings.complete_dir / "bot-123-456-sample.bin"
+    partial = settings.incomplete_dir / "bot-123-456-sample.bin.part"
+    assert task.task_id == task_id
+    assert detail == final.name
+    assert final.read_bytes() == content
+    assert not partial.exists()
+    assert bot.messages and bot.messages[0][0] == settings.owner_telegram_id
+
+
+@pytest.mark.asyncio
+async def test_direct_media_rejects_size_mismatch_for_worker_retry(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    service = BotService(settings, client=object())
+    task_id = service.tasks.enqueue(
+        "direct-media",
+        json.dumps(
+            {
+                "file_id": "opaque-file-id",
+                "filename": "sample.bin",
+                "file_size": 100,
+                "source_key": "bot-123-789",
+            }
+        ),
+    )
+    task = service.tasks.claim_next()
+    bot = FakeBot(b"short")
+
+    from app.worker import RetryableTaskError
+
+    with pytest.raises(RetryableTaskError, match="file size mismatch"):
+        await service.execute_task(task, bot)
+
+    [stored] = service.tasks.recent()
+    assert stored.task_id == task_id
+    assert stored.status == "downloading"
