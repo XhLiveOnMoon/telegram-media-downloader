@@ -714,6 +714,9 @@ async def auth_password(message: Message, state: FSMContext) -> None:
         )
         return
     except Exception as exc:
+        if type(exc).__name__ == "PasswordHashInvalidError":
+            await message.answer("Incorrect 2FA password. Try again.")
+            return
         logger.warning("Telegram 2FA verification failed: %s", type(exc).__name__)
         if is_transient_transport_error(exc):
             await message.answer(

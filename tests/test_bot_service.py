@@ -630,6 +630,53 @@ async def test_auth_password_preserves_leading_and_trailing_spaces(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_incorrect_2fa_password_keeps_password_state_for_retry(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.bot as bot_module
+    from app.bot import AuthFlow, BotService
+
+    class PasswordClient:
+        async def sign_in(self, **kwargs):
+            error = type("PasswordHashInvalidError", (Exception,), {})
+            raise error("password rejected")
+
+    class FakeState:
+        current = AuthFlow.password.state
+
+        async def get_state(self):
+            return self.current
+
+        async def clear(self):
+            self.current = None
+
+    class FakeMessage:
+        chat = SimpleNamespace(type="private")
+        from_user = SimpleNamespace(id=123456)
+        text = "incorrect password"
+
+        def __init__(self):
+            self.answers = []
+
+        async def delete(self):
+            return None
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    service = BotService(make_settings(tmp_path), PasswordClient())
+    monkeypatch.setattr(bot_module, "get_service", lambda: service)
+    state = FakeState()
+    message = FakeMessage()
+
+    await bot_module.auth_password(message, state)
+
+    assert state.current == AuthFlow.password.state
+    assert service.auth_flow_generation == 0
+    assert message.answers == ["Incorrect 2FA password. Try again."]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, monkeypatch):
     import asyncio
     from types import SimpleNamespace
