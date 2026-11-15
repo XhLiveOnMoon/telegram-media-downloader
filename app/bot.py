@@ -263,6 +263,15 @@ class BotService:
 service: BotService | None = None
 
 
+def _format_bytes(value: int) -> str:
+    amount = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if amount < 1024 or unit == "TiB":
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{amount:.1f} TiB"
+
+
 def get_service() -> BotService:
     if service is None:
         raise RuntimeError("Bot service is not initialized")
@@ -331,9 +340,23 @@ async def tasks(message: Message) -> None:
             if record.next_attempt_at is not None
             else ""
         )
+        if record.task_type == "direct-media" and record.status == "downloading":
+            progress = " progress unavailable during Bot API transfer"
+        elif record.total_bytes:
+            percent = min(100, record.progress_bytes * 100 // record.total_bytes)
+            progress = (
+                f" {percent}% ({_format_bytes(record.progress_bytes)}/"
+                f"{_format_bytes(record.total_bytes)})"
+            )
+        elif record.progress_bytes:
+            progress = f" {_format_bytes(record.progress_bytes)} downloaded"
+        else:
+            progress = ""
+        if record.current_file:
+            progress += f" {html_escape(record.current_file)}"
         lines.append(
             f"#{record.task_id} [{record.status}] {record.task_type} "
-            f"attempts={record.attempts}{retry}: {source}{detail}"
+            f"attempts={record.attempts}{retry}{progress}: {source}{detail}"
         )
     await message.answer("\n".join(lines))
 
