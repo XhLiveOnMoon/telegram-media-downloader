@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Dispatcher, F, Router
@@ -48,6 +49,7 @@ class BotService:
             settings.max_concurrent_downloads,
         )
         self.active_downloads = 0
+        self.bot_semaphore = asyncio.Semaphore(settings.max_concurrent_downloads)
         self.pending_phone: str | None = None
         self.pending_code_hash: str | None = None
 
@@ -270,22 +272,23 @@ async def direct_media(message: Message) -> None:
     partial = stable_partial_path(svc.settings.incomplete_dir, source_key, safe_name)
     final = svc.settings.complete_dir / f"{source_key}-{safe_name}"
     progress = await message.answer("Direct media download started…")
-    svc.active_downloads += 1
-    try:
-        if not (final.exists() and (not file_size or final.stat().st_size == file_size)):
-            await message.bot.download(file=file_id, destination=partial)
-            if file_size and partial.stat().st_size != file_size:
-                raise DownloadError(
-                    f"Downloaded file size mismatch ({partial.stat().st_size}/{file_size} bytes)."
-                )
-            final.parent.mkdir(parents=True, exist_ok=True)
-            partial.replace(final)
-        await progress.edit_text(f"Download completed:\n{final.name}")
-    except Exception as exc:
-        logger.exception("Direct Bot media download failed")
-        await progress.edit_text(f"Direct media download failed: {type(exc).__name__}.")
-    finally:
-        svc.active_downloads -= 1
+    async with svc.bot_semaphore:
+        svc.active_downloads += 1
+        try:
+            if not (final.exists() and (not file_size or final.stat().st_size == file_size)):
+                await message.bot.download(file=file_id, destination=partial)
+                if file_size and partial.stat().st_size != file_size:
+                    raise DownloadError(
+                        f"Downloaded file size mismatch ({partial.stat().st_size}/{file_size} bytes)."
+                    )
+                final.parent.mkdir(parents=True, exist_ok=True)
+                partial.replace(final)
+            await progress.edit_text(f"Download completed:\n{final.name}")
+        except Exception as exc:
+            logger.exception("Direct Bot media download failed")
+            await progress.edit_text(f"Direct media download failed: {type(exc).__name__}.")
+        finally:
+            svc.active_downloads -= 1
 
 
 def build_dispatcher(settings: Settings, client: TelegramClient) -> Dispatcher:
