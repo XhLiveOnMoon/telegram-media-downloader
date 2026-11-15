@@ -40,8 +40,15 @@ async def test_download_resumes_from_aligned_partial_file(tmp_path: Path):
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
     partial.write_bytes(b"a" * 4096)
 
-    result = await downloader._download_one(message)
+    progress = []
+    result = await downloader._download_one(
+        message,
+        progress_callback=lambda downloaded, total, filename: progress.append(
+            (downloaded, total, filename)
+        ),
+    )
 
+    assert progress[-1] == (8192, 8192, "asset.bin")
     assert client.requested_offset == 4096
     assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
     assert stat.S_IMODE(result.stat().st_mode) == 0o644
