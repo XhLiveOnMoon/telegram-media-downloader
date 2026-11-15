@@ -1,0 +1,17 @@
+services:
+  telegram-media-downloader:
+    build: .
+    container_name: telegram-media-downloader
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      COMPLETE_DIR: /downloads/complete
+      INCOMPLETE_DIR: /downloads/incomplete
+    volumes:
+      - ./data:/app/data
+      - /data/media/downloads/complete/telegram:/downloads/complete
+      - /data/media/downloads/incomplete/telegram:/downloads/incomplete
+    init: true
+    stop_grace_period: 30s
