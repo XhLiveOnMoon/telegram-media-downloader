@@ -76,6 +76,22 @@ class DownloadTaskStore:
             row["name"] for row in connection.execute("PRAGMA table_info(download_tasks)")
         }
         if "attempts" in columns and "next_attempt_at" in columns:
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_download_tasks_queue "
+                "ON download_tasks(status, next_attempt_at, id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_download_tasks_created "
+                "ON download_tasks(created_at DESC)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS scheduler_state "
+                "(key TEXT PRIMARY KEY, value REAL NOT NULL)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO scheduler_state(key, value) "
+                "VALUES ('cooldown_until', 0)"
+            )
             return
 
         # Rebuild rather than ALTER: the original table CHECK constraint does not
