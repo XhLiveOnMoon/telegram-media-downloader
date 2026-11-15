@@ -93,11 +93,14 @@ async def test_private_link_rejects_channel_not_found_in_account_dialogs(tmp_pat
 
 @pytest.mark.asyncio
 async def test_photo_download_uses_photo_size_for_integrity_check(tmp_path: Path):
+    class PhotoSize:
+        size = 8192
+
     message = SimpleNamespace(
         id=43,
         peer_id=PeerChannel(123456),
         media=object(),
-        photo=SimpleNamespace(id=9002, sizes=[SimpleNamespace(size=8192)]),
+        photo=SimpleNamespace(id=9002, sizes=[PhotoSize()]),
         document=None,
         grouped_id=None,
     )
@@ -112,11 +115,14 @@ async def test_photo_download_uses_photo_size_for_integrity_check(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_truncated_photo_is_not_promoted_to_completed_file(tmp_path: Path):
+    class PhotoSize:
+        size = 8192
+
     message = SimpleNamespace(
         id=44,
         peer_id=PeerChannel(123456),
         media=object(),
-        photo=SimpleNamespace(id=9003, sizes=[SimpleNamespace(size=8192)]),
+        photo=SimpleNamespace(id=9003, sizes=[PhotoSize()]),
         document=None,
         grouped_id=None,
     )
