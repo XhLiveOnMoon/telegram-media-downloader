@@ -80,9 +80,8 @@ class BotService:
                 link = parse_message_link(task.source)
                 paths = await self.downloader.download(link)
                 detail = ", ".join(path.name for path in paths)
-                await bot.send_message(
-                    self.settings.owner_telegram_id,
-                    f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\n{detail}",
+                await self._notify(
+                    bot, f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\n{detail}"
                 )
                 return detail
 
@@ -101,7 +100,7 @@ class BotService:
                 if final.exists() and (
                     file_size is None or final.stat().st_size == file_size
                 ):
-                    await self._notify(bot, f"直传任务 #{task.task_id} 已完成：\\n{final.name}")
+                    await self._notify(bot, f"直传任务 #{task.task_id} 已完成：\n{final.name}")
                     return final.name
 
                 # Bot API downloads do not expose a byte-offset resume interface.
@@ -117,10 +116,7 @@ class BotService:
                     os.fsync(stream.fileno())
                 os.replace(partial, final)
                 self._sync_directory(final.parent)
-                await bot.send_message(
-                    self.settings.owner_telegram_id,
-                    f"直传任务 #{task.task_id} 完成：\n{final.name}",
-                )
+                await self._notify(bot, f"直传任务 #{task.task_id} 完成：\n{final.name}")
                 return final.name
 
             raise ValueError(f"Unsupported task type: {task.task_type}")
