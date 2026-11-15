@@ -1,0 +1,123 @@
+import asyncio
+
+import pytest
+
+from app.task_store import DownloadTaskStore
+from app.worker import AuthorizationRequired, DownloadWorker, FloodWait, RetryableTaskError
+
+
+@pytest.mark.asyncio
+async def test_worker_claims_and_completes_one_queued_task(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/123")
+    handled = []
+
+    async def handler(task):
+        handled.append(task.task_id)
+        return "saved.bin"
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    for _ in range(100):
+        [task] = store.recent()
+        if task.status == "completed":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert handled == [task_id]
+    assert task.status == "completed"
+    assert task.detail == "saved.bin"
+
+
+@pytest.mark.asyncio
+async def test_floodwait_persists_global_cooldown_and_requeues_task(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/456")
+    entered = asyncio.Event()
+
+    async def handler(task):
+        entered.set()
+        raise FloodWait(3600)
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    for _ in range(100):
+        [task] = store.recent()
+        if task.status == "retry_wait":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "retry_wait"
+    assert store.cooldown_remaining() > 3500
+
+    restarted = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    assert restarted.claim_next() is None
+    assert restarted.cooldown_remaining() > 3500
+
+
+@pytest.mark.asyncio
+async def test_authorization_error_pauses_task_without_retry(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/789")
+    entered = asyncio.Event()
+
+    async def handler(task):
+        entered.set()
+        raise AuthorizationRequired("Run /auth")
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    for _ in range(100):
+        [task] = store.recent()
+        if task.status == "auth_required":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "auth_required"
+    assert task.attempts == 1
+    assert store.resume_auth_required() == 1
+    [task] = store.recent()
+    assert task.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_uses_persistent_retry_schedule(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/987")
+    entered = asyncio.Event()
+
+    async def handler(task):
+        entered.set()
+        raise RetryableTaskError("connection reset")
+
+    worker = DownloadWorker(
+        store, handler, poll_interval=0.01, retry_base_delay=120, retry_max_delay=120
+    )
+    run = asyncio.create_task(worker.run())
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    for _ in range(100):
+        [task] = store.recent()
+        if task.status == "retry_wait":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "retry_wait"
+    assert task.next_attempt_at is not None
+    assert task.next_attempt_at > __import__("time").time() + 100
