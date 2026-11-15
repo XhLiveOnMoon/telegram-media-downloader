@@ -153,18 +153,6 @@ class DownloadTaskStore:
             )
             return int(cursor.lastrowid)
 
-    def create(self, task_type: str, source: str) -> int:
-        """Compatibility path for the pre-worker handlers; new code must use enqueue()."""
-        now = self._now()
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "INSERT INTO download_tasks "
-                "(task_type, source, status, created_at, updated_at) "
-                "VALUES (?, ?, 'downloading', ?, ?)",
-                (task_type, source[:4000], now, now),
-            )
-            return int(cursor.lastrowid)
-
     def claim_next(self, now: float | None = None) -> DownloadTask | None:
         """Atomically claim the oldest due task, respecting the global FloodWait."""
         timestamp = time.time() if now is None else now
@@ -257,16 +245,6 @@ class DownloadTaskStore:
                 (status, detail[:1000], self._now(), task_id),
             )
 
-    def mark_running(self, task_id: int) -> bool:
-        """Compatibility helper: claim a specific queued/interrupted task atomically."""
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "UPDATE download_tasks SET status='downloading', detail=?, updated_at=? "
-                "WHERE id=? AND status IN ('queued','interrupted')",
-                ("Claimed for recovery", self._now(), task_id),
-            )
-            return cursor.rowcount == 1
-
     def resume_auth_required(self) -> int:
         """Requeue authorization-blocked work after the owner completes /auth."""
         with self._connect() as connection:
@@ -276,16 +254,6 @@ class DownloadTaskStore:
                 ("Requeued after Telegram authorization", self._now()),
             )
             return cursor.rowcount
-
-    def interrupted(self, limit: int = 50) -> list[DownloadTask]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT id AS task_id, task_type, source, status, detail, created_at, "
-                "updated_at, attempts, next_attempt_at FROM download_tasks "
-                "WHERE status IN ('interrupted','auth_required') ORDER BY id ASC LIMIT ?",
-                (max(1, min(limit, 500)),),
-            ).fetchall()
-        return [self._task(row) for row in rows]
 
     def recent(self, limit: int = 10) -> list[DownloadTask]:
         with self._connect() as connection:
