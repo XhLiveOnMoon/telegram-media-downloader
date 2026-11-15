@@ -37,6 +37,9 @@ def test_legacy_running_tasks_are_migrated_to_interrupted(tmp_path: Path):
             """
         )
         connection.execute(
+            "CREATE INDEX idx_download_tasks_created ON download_tasks(created_at DESC)"
+        )
+        connection.execute(
             "INSERT INTO download_tasks "
             "(task_type, source, status, created_at, updated_at) "
             "VALUES ('message-link', 'https://t.me/example/456', 'running', 'old', 'old')"
