@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from html import escape as html_escape
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -72,6 +73,10 @@ class BotService:
     async def wait_for_mtproto_cooldown(self) -> None:
         while True:
             remaining = self.tasks.cooldown_remaining()
+            if self.worker is not None:
+                remaining = max(
+                    remaining, self.worker.local_cooldown_until - time.time()
+                )
             if remaining <= 0:
                 return
             await asyncio.sleep(remaining)
