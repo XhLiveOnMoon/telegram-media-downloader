@@ -49,6 +49,7 @@ class DownloadWorker:
         self.retry_base_delay = max(0.1, retry_base_delay)
         self.retry_max_delay = max(self.retry_base_delay, retry_max_delay)
         self.active_task_id: int | None = None
+        self.local_cooldown_until = 0.0
 
     async def run(self) -> None:
         """Run until cancelled; recover from transient scheduler/database errors."""
@@ -71,7 +72,10 @@ class DownloadWorker:
                 await asyncio.sleep(5)
 
     async def _run_once(self) -> None:
-        cooldown = self.store.cooldown_remaining()
+        cooldown = max(
+            self.store.cooldown_remaining(),
+            self.local_cooldown_until - time.time(),
+        )
         if cooldown > 0:
             logger.warning("Global Telegram cooldown active for %.1f more seconds", cooldown)
             await asyncio.sleep(cooldown)
@@ -95,7 +99,12 @@ class DownloadWorker:
             self.active_task_id = None
             raise
         except FloodWait as exc:
+            # Enforce the wait in memory immediately, even if SQLite is temporarily unavailable.
+            self.local_cooldown_until = max(
+                self.local_cooldown_until, time.time() + exc.seconds
+            )
             until = self.store.set_global_cooldown(exc.seconds)
+            self.local_cooldown_until = max(self.local_cooldown_until, until)
             delay = max(0.0, until - time.time())
             self.store.retry_later(
                 task.task_id,
