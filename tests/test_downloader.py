@@ -81,6 +81,7 @@ async def test_incomplete_download_keeps_partial_file_for_retry(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_transient_network_error_retries_from_partial_offset(tmp_path: Path):
     message = make_message()
+
     class FlakyClient:
         def __init__(self):
             self.offsets = []
@@ -105,7 +106,6 @@ async def test_transient_network_error_retries_from_partial_offset(tmp_path: Pat
 
     assert client.offsets == [0, 4096]
     assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
-
 
 
 @pytest.mark.asyncio
@@ -145,7 +145,6 @@ async def test_expired_file_reference_is_refreshed_before_resuming(tmp_path: Pat
     assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
 
 
-
 @pytest.mark.asyncio
 async def test_auth_expiration_is_not_retried_as_network_error(tmp_path: Path):
     message = make_message()
@@ -177,7 +176,6 @@ async def test_auth_expiration_is_not_retried_as_network_error(tmp_path: Path):
         await downloader._download_one(message)
 
     assert client.calls == 1
-
 
 
 @pytest.mark.asyncio
