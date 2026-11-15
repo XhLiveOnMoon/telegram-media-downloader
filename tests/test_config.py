@@ -90,3 +90,18 @@ def test_data_directory_rejects_symlink_escape(tmp_path: Path):
             complete_dir=tmp_path / "downloads" / "complete" / "telegram",
             incomplete_dir=tmp_path / "downloads" / "incomplete" / "telegram",
         )
+
+
+
+def test_data_directory_must_be_outside_download_mount(tmp_path: Path):
+    downloads = tmp_path / "downloads"
+    with pytest.raises(ValueError, match="outside the shared downloads mount"):
+        Settings(
+            bot_token="test-token",
+            api_id=12345,
+            api_hash="test-hash",
+            owner_telegram_id=123456,
+            data_dir=downloads / "state",
+            complete_dir=downloads / "complete" / "telegram",
+            incomplete_dir=downloads / "incomplete" / "telegram",
+        )
