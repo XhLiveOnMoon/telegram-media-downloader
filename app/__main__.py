@@ -15,7 +15,7 @@ from .bot import build_dispatcher, get_service
 from .config import Settings
 
 
-async def monitor_authorization(bot: Bot, client: TelegramClient, owner_id: int) -> None:
+async def monitor_authorization(bot: Bot, owner_id: int) -> None:
     """Notify the owner once when the MTProto session becomes unauthorized."""
     previous: bool | None = None
     while True:
@@ -72,7 +72,7 @@ async def main() -> None:
         svc = get_service()
         worker_task = svc.start_worker(bot)
         monitor_task = asyncio.create_task(
-            monitor_authorization(bot, client, settings.owner_telegram_id)
+            monitor_authorization(bot, settings.owner_telegram_id)
         )
         await dispatcher.start_polling(
             bot, allowed_updates=dispatcher.resolve_used_update_types()
