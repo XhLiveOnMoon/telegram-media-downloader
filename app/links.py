@@ -4,8 +4,9 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-_PUBLIC = re.compile(r"^/(?:(?:s)/)?(?P<username>[A-Za-z0-9_]{4,})/(?P<message_id>\d+)/?$")
-_PRIVATE = re.compile(r"^/c/(?P<channel_id>\d+)/(?P<message_id>\d+)/?$")
+_PUBLIC = re.compile(r"^/(?:(?:s)/)?(?P<username>[A-Za-z0-9_]{4,})/(?P<message_id>[1-9]\d*)/?$")
+_PRIVATE = re.compile(r"^/c/(?P<channel_id>[1-9]\d*)/(?P<message_id>[1-9]\d*)/?$")
+_ALLOWED_HOSTS = {"t.me", "www.t.me", "telegram.me", "www.telegram.me"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,14 +18,31 @@ class MessageLink:
 
 
 def parse_message_link(value: str) -> MessageLink:
-    """Parse public t.me/<name>/<id> and private t.me/c/<id>/<id> links."""
+    """Parse canonical HTTPS Telegram public and private message links."""
     raw = value.strip().strip("<>")
     if not raw:
         raise ValueError("Please provide a Telegram message link.")
-    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+
+    # Scheme-less Telegram links are accepted as HTTPS, but explicit non-HTTPS
+    # schemes, credentials, ports, and fragments are rejected.
+    candidate = raw if "://" in raw else f"https://{raw}"
+    try:
+        parsed = urlparse(candidate)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Invalid Telegram message link.") from exc
+
     host = (parsed.hostname or "").lower()
-    if host not in {"t.me", "www.t.me", "telegram.me", "www.telegram.me"}:
-        raise ValueError("Only t.me message links are supported.")
+    if (
+        parsed.scheme.lower() != "https"
+        or host not in _ALLOWED_HOSTS
+        or parsed.netloc.lower() != host
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or parsed.fragment
+    ):
+        raise ValueError("Only canonical HTTPS t.me message links are supported.")
 
     path = parsed.path.rstrip("/")
     private = _PRIVATE.fullmatch(path)
