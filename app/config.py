@@ -35,8 +35,12 @@ class Settings:
             and complete.parent.parent == incomplete.parent.parent
         )
         downloads_root = complete.parent.parent
-        if data_dir == downloads_root or downloads_root in data_dir.parents:
-            raise ValueError("DATA_DIR must be outside the shared downloads mount.")
+        if (
+            data_dir == downloads_root
+            or downloads_root in data_dir.parents
+            or data_dir in downloads_root.parents
+        ):
+            raise ValueError("DATA_DIR must be separate from the shared downloads mount.")
         if not valid_layout:
             raise ValueError(
                 "Download paths must be real sibling Telegram-only directories: "
