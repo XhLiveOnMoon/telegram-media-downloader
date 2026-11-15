@@ -27,10 +27,14 @@ class MediaDownloader:
         complete_dir: Path,
         incomplete_dir: Path,
         max_concurrent_downloads: int = 1,
+        max_network_retries: int = 5,
+        retry_base_delay: float = 2.0,
     ) -> None:
         self.client = client
         self.complete_dir = complete_dir
         self.incomplete_dir = incomplete_dir
+        self.max_network_retries = max(0, max_network_retries)
+        self.retry_base_delay = max(0.1, retry_base_delay)
         self._semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
     async def download(self, link: MessageLink) -> list[Path]:
@@ -81,40 +85,61 @@ class MediaDownloader:
         partial = stable_partial_path(self.incomplete_dir, source_key, filename)
         final = self.complete_dir / f"{source_key}-{filename}"
         self.complete_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            size = getattr(document, "size", None) if document else None
-            if final.exists() and (not size or final.stat().st_size == size):
-                return final
-            offset = partial.stat().st_size if partial.exists() else 0
-            if size and offset > size:
-                partial.unlink(missing_ok=True)
-                offset = 0
-            # Telegram file offsets are aligned to 4 KiB.
-            # Discard an incomplete tail before resuming.
-            aligned_offset = offset - (offset % 4096)
-            if aligned_offset != offset:
-                with partial.open("r+b") as stream:
-                    stream.truncate(aligned_offset)
-                offset = aligned_offset
-            if not (size and offset == size):
-                async for chunk in self.client.iter_download(
-                    message.media,
-                    offset=offset,
-                    request_size=512 * 1024,
-                    chunk_size=512 * 1024,
-                ):
-                    with partial.open("ab") as stream:
-                        stream.write(chunk)
-            if size and partial.stat().st_size != size:
-                raise DownloadError(
-                    f"Incomplete download ({partial.stat().st_size}/{size} bytes); retry to resume."
-                )
-            os.replace(partial, final)
+        size = getattr(document, "size", None) if document else None
+        if final.exists() and (not size or final.stat().st_size == size):
             return final
-        except FloodWaitError as exc:
-            raise DownloadError(f"Telegram rate limit: retry after {exc.seconds} seconds.") from exc
-        except DownloadError:
-            raise
-        except Exception as exc:
-            logger.exception("Media download failed for message %s", message.id)
-            raise DownloadError(f"Download failed: {type(exc).__name__}. Retry later.") from exc
+
+        for attempt in range(self.max_network_retries + 1):
+            try:
+                offset = partial.stat().st_size if partial.exists() else 0
+                if size and offset > size:
+                    partial.unlink(missing_ok=True)
+                    offset = 0
+                # Telegram file offsets are aligned to 4 KiB.
+                # Discard an incomplete tail before resuming.
+                aligned_offset = offset - (offset % 4096)
+                if aligned_offset != offset:
+                    with partial.open("r+b") as stream:
+                        stream.truncate(aligned_offset)
+                    offset = aligned_offset
+                if not (size and offset == size):
+                    async for chunk in self.client.iter_download(
+                        message.media,
+                        offset=offset,
+                        request_size=512 * 1024,
+                        chunk_size=512 * 1024,
+                    ):
+                        with partial.open("ab") as stream:
+                            stream.write(chunk)
+                if size and partial.stat().st_size != size:
+                    raise DownloadError(
+                        f"Incomplete download ({partial.stat().st_size}/{size} bytes); "
+                        "retry to resume."
+                    )
+                os.replace(partial, final)
+                return final
+            except FloodWaitError as exc:
+                raise DownloadError(
+                    f"Telegram rate limit: retry after {exc.seconds} seconds."
+                ) from exc
+            except DownloadError:
+                raise
+            except Exception as exc:
+                if attempt >= self.max_network_retries:
+                    logger.exception("Media download failed for message %s", message.id)
+                    raise DownloadError(
+                        f"Network/download failed after {attempt + 1} attempts "
+                        f"({type(exc).__name__}). Partial data was kept; resend the same "
+                        "message link later to resume."
+                    ) from exc
+                delay = min(self.retry_base_delay * (2**attempt), 30.0)
+                logger.warning(
+                    "Download interrupted for message %s; retry %s/%s in %.1fs (%s)",
+                    message.id,
+                    attempt + 1,
+                    self.max_network_retries,
+                    delay,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(delay)
+        raise DownloadError("Download stopped unexpectedly.")
