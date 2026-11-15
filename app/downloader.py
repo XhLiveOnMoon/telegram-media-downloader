@@ -88,7 +88,8 @@ class MediaDownloader:
             if size and offset > size:
                 partial.unlink(missing_ok=True)
                 offset = 0
-            # Telegram file offsets are aligned to 4 KiB. Discard an incomplete tail before resuming.
+            # Telegram file offsets are aligned to 4 KiB.
+            # Discard an incomplete tail before resuming.
             aligned_offset = offset - (offset % 4096)
             if aligned_offset != offset:
                 with partial.open("r+b") as stream:
