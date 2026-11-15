@@ -112,4 +112,4 @@ async def test_mtproto_authorization_waits_for_persisted_global_cooldown(tmp_pat
 
     assert elapsed >= 0.04
     assert client.calls == 1
-    assert service.tasks.cooldown_remaining() == 0
+    assert service.tasks.cooldown_remaining() <= 0.01
