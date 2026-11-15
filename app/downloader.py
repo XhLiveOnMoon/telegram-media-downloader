@@ -51,7 +51,7 @@ class MediaDownloader:
             for item in messages:
                 if not item or not item.media:
                     continue
-                results.append(await self._download_one(item))
+                results.append(await self._download_one(item, entity=entity))
             if not results:
                 raise DownloadError("The selected message does not contain downloadable media.")
             return results
@@ -81,7 +81,7 @@ class MediaDownloader:
         finally:
             os.close(descriptor)
 
-    async def _download_one(self, message) -> Path:
+    async def _download_one(self, message, entity=None) -> Path:
         document = getattr(message, "document", None)
         original_name = None
         if document:
@@ -135,6 +135,7 @@ class MediaDownloader:
                             # Flush every yielded byte before retrying or propagating errors.
                             stream.flush()
                             os.fsync(stream.fileno())
+                            self._sync_directory(partial.parent)
 
                 actual_size = partial.stat().st_size
                 if size and actual_size != size:
@@ -153,6 +154,34 @@ class MediaDownloader:
             except DownloadError:
                 raise
             except Exception as exc:
+                if type(exc).__name__ in {
+                    "FileReferenceExpiredError",
+                    "FileReferenceInvalidError",
+                    "FileReferenceEmptyError",
+                }:
+                    try:
+                        refreshed = await self.client.get_messages(
+                            entity or message.peer_id, ids=message.id
+                        )
+                    except Exception as refresh_exc:
+                        logger.warning(
+                            "Could not refresh Telegram media reference for message %s: %s",
+                            message.id,
+                            type(refresh_exc).__name__,
+                        )
+                        refreshed = None
+                    if refreshed and refreshed.media:
+                        message = refreshed
+                        logger.info(
+                            "Refreshed expired Telegram media reference for message %s",
+                            message.id,
+                        )
+                        continue
+                    raise DownloadError(
+                        "Telegram file reference expired and the source message could not "
+                        "be refreshed. Check source access and submit the link again."
+                    ) from exc
+
                 if attempt >= self.max_network_retries:
                     logger.exception("Media download failed for message %s", message.id)
                     raise DownloadError(
