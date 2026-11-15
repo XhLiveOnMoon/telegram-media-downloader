@@ -20,7 +20,7 @@ async def monitor_authorization(bot: Bot, client: TelegramClient, owner_id: int)
     previous: bool | None = None
     while True:
         try:
-            authorized = await client.is_user_authorized()
+            authorized = await get_service().is_authorized()
             if not authorized and previous is not False:
                 markup = InlineKeyboardMarkup(
                     inline_keyboard=[
