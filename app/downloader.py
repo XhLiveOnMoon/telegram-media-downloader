@@ -153,12 +153,16 @@ class MediaDownloader:
             except ValueError:
                 # A t.me/c link contains only the channel ID, not its account-specific
                 # access hash. Populate Telethon's entity cache from dialogs on a miss.
+                expected_peer_id = get_peer_id(PeerChannel(link.channel_id))
                 async for dialog in self.client.iter_dialogs():
                     entity = dialog.entity
-                    if (
-                        getattr(entity, "id", None) == link.channel_id
-                        and getattr(entity, "access_hash", None) is not None
-                    ):
+                    if getattr(entity, "access_hash", None) is None:
+                        continue
+                    try:
+                        candidate_peer_id = get_peer_id(entity)
+                    except TypeError:
+                        continue
+                    if candidate_peer_id == expected_peer_id:
                         return entity
                 raise DownloadError(
                     "Private channel is not present in this account's dialogs or is inaccessible."

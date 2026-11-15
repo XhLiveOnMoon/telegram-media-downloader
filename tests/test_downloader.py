@@ -40,14 +40,18 @@ async def test_private_link_resolves_uncached_channel_from_account_dialogs(tmp_p
 
     from app.links import MessageLink
 
-    channel = SimpleNamespace(id=123456, access_hash=987654321)
+    from telethon.tl.types import InputPeerChannel, InputPeerUser
+
+    channel = InputPeerChannel(channel_id=123456, access_hash=987654321)
 
     class DialogClient:
         async def get_entity(self, peer):
             raise ValueError("Could not find input entity in cache")
 
         async def iter_dialogs(self):
-            yield SimpleNamespace(entity=SimpleNamespace(id=999, access_hash=111))
+            yield SimpleNamespace(
+                entity=InputPeerUser(user_id=123456, access_hash=111)
+            )
             yield SimpleNamespace(entity=channel)
 
     downloader = MediaDownloader(DialogClient(), tmp_path / "complete", tmp_path / "incomplete")
@@ -70,7 +74,11 @@ async def test_private_link_rejects_channel_not_found_in_account_dialogs(tmp_pat
             raise ValueError("Could not find input entity in cache")
 
         async def iter_dialogs(self):
-            yield SimpleNamespace(entity=SimpleNamespace(id=999, access_hash=111))
+            from telethon.tl.types import InputPeerUser
+
+            yield SimpleNamespace(
+                entity=InputPeerUser(user_id=123456, access_hash=111)
+            )
 
     downloader = MediaDownloader(DialogClient(), tmp_path / "complete", tmp_path / "incomplete")
 
