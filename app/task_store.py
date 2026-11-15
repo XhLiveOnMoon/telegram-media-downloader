@@ -337,6 +337,16 @@ class DownloadTaskStore:
             if cursor.rowcount != 1:
                 raise RuntimeError(f"Task {task_id} is not in downloading state")
 
+    def recover_orphaned_downloads(self) -> int:
+        """Recover a claimed task after the worker lost the ability to persist its outcome."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE download_tasks SET status='interrupted', detail=?, "
+                "next_attempt_at=NULL, updated_at=? WHERE status='downloading'",
+                ("Recovered after a worker persistence failure", self._now()),
+            )
+            return cursor.rowcount
+
     def resume_auth_required(self) -> int:
         """Requeue authorization-blocked work after the owner completes /auth."""
         with self._connect() as connection:
