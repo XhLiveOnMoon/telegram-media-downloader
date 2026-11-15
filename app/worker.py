@@ -52,6 +52,7 @@ class DownloadWorker:
         self.operation_task: asyncio.Task | None = None
         self.cancel_requested = False
         self.local_cooldown_until = 0.0
+        self.needs_orphan_recovery = False
 
     def extend_local_cooldown(self, seconds: float) -> None:
         self.local_cooldown_until = max(
@@ -84,6 +85,7 @@ class DownloadWorker:
                             task_id, "Worker loop failed; task will be recovered on restart"
                         )
                     except Exception:
+                        self.needs_orphan_recovery = True
                         logger.exception("Could not persist interrupted state for task %s", task_id)
                 self.active_task_id = None
                 self.operation_task = None
@@ -91,6 +93,12 @@ class DownloadWorker:
                 await asyncio.sleep(5)
 
     async def _run_once(self) -> None:
+        if self.needs_orphan_recovery:
+            recovered = self.store.recover_orphaned_downloads()
+            self.needs_orphan_recovery = False
+            if recovered:
+                logger.warning("Recovered %s orphaned task(s) after a storage error", recovered)
+
         cooldown = max(
             self.store.cooldown_remaining(),
             self.local_cooldown_until - time.time(),
