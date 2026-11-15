@@ -58,7 +58,9 @@ async def main() -> None:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
         lock_file.close()
-        raise RuntimeError("Another Telegram Media Downloader instance is already running.") from exc
+        raise RuntimeError(
+            "Another Telegram Media Downloader instance is already running."
+        ) from exc
 
     client = TelegramClient(
         str(settings.data_dir / "telegram_user"), settings.api_id, settings.api_hash
