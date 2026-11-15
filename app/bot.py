@@ -506,10 +506,18 @@ async def auth_start(message: Message, state: FSMContext) -> None:
         return
     except Exception as exc:
         logger.warning("Authorization check failed: %s", type(exc).__name__)
-        await message.answer(
-            "暂时无法检查 Telegram 授权状态，可能是网络或本地会话存储暂时不可用。"
-            "请稍后重试 /auth；当前不会将账号误判为未授权。"
-        )
+        if type(exc).__name__ == "AuthKeyNotFound":
+            await message.answer(
+                "Telegram 服务器暂时无法识别当前 MTProto Session。"
+                "这可能是临时服务器问题；请稍后重试。若持续出现，请按 README 中 "
+                "“Recovering an unrecognized Telethon session” 的步骤备份并重建 Session，"
+                "然后重新发送 /auth。当前不会自动删除或覆盖旧 Session。"
+            )
+        else:
+            await message.answer(
+                "暂时无法检查 Telegram 授权状态，可能是网络或本地会话存储暂时不可用。"
+                "请稍后重试 /auth；当前不会将账号误判为未授权。"
+            )
         return
     if generation != svc.auth_flow_generation:
         return

@@ -124,6 +124,30 @@ trap - EXIT
 
 Keep the archive private: the Telethon session can authorize access to the Telegram account. Back up the media directories on the data disk separately if the downloaded files must also be recoverable. To restore, stop the service, restore `.env` and `data/`, reapply ownership/permissions (`1001:1001`, `data/` mode `700`, `.env` mode `600`), then start the Compose service.
 
+## Recovering an unrecognized Telethon session
+
+Telethon's `AuthKeyNotFound` error is ambiguous: Telegram may temporarily fail to recognize the key, or the session may need to be recreated. The service deliberately does not delete or replace session files automatically. First wait and retry authorization; only use this recovery procedure if the error persists.
+
+Run these commands from the project directory. They create a private backup, stop the service, preserve the old session files under timestamped names, and start the service with a fresh session:
+
+```bash
+set -Eeuo pipefail
+umask 077
+backup="$HOME/telegram-media-downloader-before-session-reset-$(date +%F-%H%M%S).tar.gz"
+tar -czf "$backup" .env data
+docker compose stop
+stamp=$(date +%F-%H%M%S)
+for suffix in "" "-journal" "-wal" "-shm"; do
+  file="data/telegram_user.session${suffix}"
+  if [ -e "$file" ]; then
+    mv "$file" "${file}.invalid-${stamp}"
+  fi
+done
+docker compose up -d
+```
+
+Then send `/auth` to the Bot and complete login. Keep the backup and renamed session files private; they contain account authorization material. Do not run this procedure while the service is running.
+
 ## Development and tests
 
 ```bash

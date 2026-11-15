@@ -890,3 +890,45 @@ async def test_auth_start_reports_temporary_authorization_check_failure(
     assert len(message.answers) == 1
     assert "暂时无法检查" in message.answers[0]
     assert "不会将账号误判为未授权" in message.answers[0]
+
+
+@pytest.mark.asyncio
+async def test_auth_start_explains_ambiguous_auth_key_not_found(
+    tmp_path: Path, monkeypatch
+):
+    from app.bot import auth_start
+
+    class BrokenSessionService:
+        settings = make_settings(tmp_path)
+        auth_flow_generation = 0
+
+        def is_owner(self, message):
+            return True
+
+        async def is_authorized(self):
+            class AuthKeyNotFound(Exception):
+                pass
+
+            raise AuthKeyNotFound()
+
+    class FakeMessage:
+        from_user = type("User", (), {"id": 123456})()
+
+        def __init__(self):
+            self.answers = []
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    class FakeState:
+        async def set_state(self, state):
+            raise AssertionError("Unknown authorization state must not advance the FSM")
+
+    monkeypatch.setattr("app.bot.get_service", lambda: BrokenSessionService())
+    message = FakeMessage()
+
+    await auth_start(message, FakeState())
+
+    assert len(message.answers) == 1
+    assert "可能是临时服务器问题" in message.answers[0]
+    assert "不会自动删除或覆盖旧 Session" in message.answers[0]
