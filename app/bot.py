@@ -68,9 +68,17 @@ class BotService:
     def is_owner(self, message: Message) -> bool:
         return bool(message.from_user and message.from_user.id == self.settings.owner_telegram_id)
 
+    async def wait_for_mtproto_cooldown(self) -> None:
+        while True:
+            remaining = self.tasks.cooldown_remaining()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(remaining)
+
     async def is_authorized(self) -> bool:
         try:
             async with self.mtproto_lock:
+                await self.wait_for_mtproto_cooldown()
                 return await self.client.is_user_authorized()
         except FloodWaitError as exc:
             self.tasks.set_global_cooldown(exc.seconds)
@@ -88,6 +96,7 @@ class BotService:
             if task.task_type == "message-link":
                 link = parse_message_link(task.source)
                 async with self.mtproto_lock:
+                    await self.wait_for_mtproto_cooldown()
                     paths = await self.downloader.download(link)
                 detail = ", ".join(path.name for path in paths)
                 await self._notify(
@@ -313,6 +322,7 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         return
     try:
         async with svc.mtproto_lock:
+            await svc.wait_for_mtproto_cooldown()
             sent = await svc.client.send_code_request(phone)
     except FloodWaitError as exc:
         svc.tasks.set_global_cooldown(exc.seconds)
@@ -344,6 +354,7 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         return
     try:
         async with svc.mtproto_lock:
+            await svc.wait_for_mtproto_cooldown()
             await svc.client.sign_in(
                 phone=svc.pending_phone,
                 code=code,
@@ -377,6 +388,7 @@ async def auth_password(message: Message, state: FSMContext) -> None:
     await _delete_sensitive_message(message)
     try:
         async with svc.mtproto_lock:
+            await svc.wait_for_mtproto_cooldown()
             await svc.client.sign_in(password=password)
     except FloodWaitError as exc:
         svc.tasks.set_global_cooldown(exc.seconds)
