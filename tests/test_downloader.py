@@ -180,6 +180,7 @@ async def test_auth_expiration_is_not_retried_as_network_error(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_transient_entity_lookup_failure_is_deferred_to_worker(tmp_path: Path):
+
     class DisconnectedClient:
         async def get_entity(self, username):
             raise ConnectionError("network is temporarily unavailable")
