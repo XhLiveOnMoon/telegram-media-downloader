@@ -267,7 +267,13 @@ async def tasks(message: Message) -> None:
         return
     lines = ["Recent download tasks:"]
     for record in records:
-        source = record.source[:100]
+        if record.task_type == "direct-media":
+            try:
+                source = json.loads(record.source).get("filename", "direct media")
+            except (json.JSONDecodeError, AttributeError):
+                source = "direct media"
+        else:
+            source = record.source[:100]
         detail = f" — {record.detail[:100]}" if record.detail else ""
         lines.append(
             f"#{record.task_id} [{record.status}] {record.task_type}: "
