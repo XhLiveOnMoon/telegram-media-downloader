@@ -16,7 +16,6 @@ from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from .config import Settings
 from .downloader import (
     AuthorizationRequiredError,
-    DownloadError,
     MediaDownloader,
     TransientDownloadError,
 )
@@ -351,10 +350,6 @@ async def download(message: Message, command: CommandObject) -> None:
         await message.answer(str(exc))
         return
     task_id = svc.tasks.enqueue("message-link", command.args)
-    if not await svc.client.is_user_authorized():
-        svc.tasks.require_auth(task_id, "Telegram account authorization is required")
-        await message.answer(f"任务 #{task_id} 已保存，但需要先 /auth 授权；授权后会自动排队。")
-        return
     await message.answer(f"任务 #{task_id} 已加入下载队列，当前采用全局单任务串行下载。")
 
 
