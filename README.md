@@ -105,6 +105,18 @@ The service sees the shared downloads root through one HDD mount so a completed 
 - Use the Bot only in a private chat. Login code and 2FA password messages are deleted on a best-effort basis immediately after receipt.
 - Do not share logs or session files publicly. The application avoids logging login codes, passwords, API hashes, and Bot tokens.
 
+## Backup and restore
+
+The `data/` directory contains the Telethon session and the durable task database. Stop the service before making a filesystem-level backup so SQLite WAL data is checkpointed:
+
+```bash
+docker compose stop
+tar -czf telegram-media-downloader-state-$(date +%F).tar.gz .env data
+docker compose start
+```
+
+Keep the archive private: the Telethon session can authorize access to the Telegram account. Back up the media directories on the data disk separately if the downloaded files must also be recoverable. To restore, stop the service, restore `.env` and `data/`, reapply ownership/permissions (`1001:1001`, `data/` mode `700`, `.env` mode `600`), then start the Compose service.
+
 ## Development and tests
 
 ```bash
