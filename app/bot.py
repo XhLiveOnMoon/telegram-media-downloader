@@ -334,7 +334,9 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         return
     except Exception as exc:
         logger.warning("Telegram code request failed: %s", type(exc).__name__)
-        await message.answer("Could not request a login code. Check the number and try /auth again.")
+        await message.answer(
+            "Could not request a login code. Check the number and try /auth again."
+        )
         await state.clear()
         return
     svc.pending_phone = phone
