@@ -34,6 +34,7 @@ async def monitor_authorization(bot: Bot, client: TelegramClient, owner_id: int)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            # A transient RPC/network failure is not proof that authorization expired.
             logging.getLogger(__name__).warning(
                 "Authorization monitor check failed: %s", type(exc).__name__
             )
@@ -52,16 +53,20 @@ async def main() -> None:
     )
     await client.connect()
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dispatcher = build_dispatcher(settings, client)
-    await recover_interrupted_tasks(bot)
-    monitor_task = asyncio.create_task(
-        monitor_authorization(bot, client, settings.owner_telegram_id)
-    )
+    monitor_task: asyncio.Task | None = None
     try:
-        await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
+        dispatcher = build_dispatcher(settings, client)
+        await recover_interrupted_tasks(bot)
+        monitor_task = asyncio.create_task(
+            monitor_authorization(bot, client, settings.owner_telegram_id)
+        )
+        await dispatcher.start_polling(
+            bot, allowed_updates=dispatcher.resolve_used_update_types()
+        )
     finally:
-        monitor_task.cancel()
-        await asyncio.gather(monitor_task, return_exceptions=True)
+        if monitor_task is not None:
+            monitor_task.cancel()
+            await asyncio.gather(monitor_task, return_exceptions=True)
         await bot.session.close()
         await client.disconnect()
 
