@@ -61,17 +61,20 @@ class MediaDownloader:
             try:
                 entity = await self._resolve_entity(link)
                 message = await self.client.get_messages(entity, ids=link.message_id)
-            except Exception as exc:
-                if type(exc).__name__ in _AUTH_ERROR_NAMES:
-                    raise AuthorizationRequiredError(
-                        "Telegram account authorization is required. Run /auth to resume."
-                    ) from exc
+            except FloodWaitError:
                 raise
+            except Exception as exc:
+                self._translate_rpc_error(exc, "resolving the source message")
             if not message:
                 raise DownloadError(
                     "Message not found. It may have been deleted or is inaccessible."
                 )
-            messages = await self._album_messages(entity, message)
+            try:
+                messages = await self._album_messages(entity, message)
+            except FloodWaitError:
+                raise
+            except Exception as exc:
+                self._translate_rpc_error(exc, "reading the source album")
             results: list[Path] = []
             for item in messages:
                 if not item or not item.media:
@@ -80,6 +83,25 @@ class MediaDownloader:
             if not results:
                 raise DownloadError("The selected message does not contain downloadable media.")
             return results
+
+    @staticmethod
+    def _translate_rpc_error(exc: Exception, context: str) -> None:
+        name = type(exc).__name__
+        if name in _AUTH_ERROR_NAMES:
+            raise AuthorizationRequiredError(
+                "Telegram account authorization is required. Run /auth to resume."
+            ) from exc
+        if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)) or name in {
+            "ServerError",
+            "TimedOutError",
+            "RpcCallFailError",
+            "InterdcCallError",
+            "ConnectionNotInitedError",
+        }:
+            raise TransientDownloadError(
+                f"Temporary Telegram network failure while {context}: {name}"
+            ) from exc
+        raise exc
 
     async def _resolve_entity(self, link: MessageLink):
         if link.kind == "public" and link.username:
