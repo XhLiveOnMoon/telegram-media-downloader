@@ -40,7 +40,8 @@ def test_interrupted_tasks_can_be_recovered_and_marked_running(tmp_path: Path):
     assert interrupted.task_id == task_id
     assert interrupted.status == "interrupted"
 
-    restarted_instance.mark_running(task_id)
+    assert restarted_instance.mark_running(task_id) is True
+    assert restarted_instance.mark_running(task_id) is False
     [recovered] = restarted_instance.recent()
     assert recovered.status == "running"
     assert "resumed" in recovered.detail.lower()
