@@ -396,6 +396,7 @@ async def test_transient_auth_failures_preserve_login_flow(
         pending_phone=pending[0],
         pending_code_hash=pending[1],
         auth_flow_generation=0,
+        auth_state_lock=asyncio.Lock(),
         is_owner=lambda message: True,
         wait_for_mtproto_cooldown=lambda: asyncio.sleep(0),
         note_flood_wait=lambda seconds: None,
