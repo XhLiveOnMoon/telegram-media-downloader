@@ -1,5 +1,4 @@
 import sqlite3
-import time
 from pathlib import Path
 
 from app.task_store import DownloadTaskStore
@@ -72,7 +71,6 @@ def test_retry_wait_is_not_claimed_before_due_time(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
     task_id = store.enqueue("message-link", "https://t.me/example/3")
     assert store.claim_next(now=100) is not None
-    now = time.time()
     store.retry_later(task_id, "temporary network issue", delay_seconds=60)
     # Compare against the persisted due timestamp without sleeping in the test.
     [waiting] = store.recent()
