@@ -484,6 +484,11 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         return
     except Exception as exc:
         logger.warning("Telegram code request failed: %s", type(exc).__name__)
+        if is_transient_transport_error(exc):
+            await message.answer(
+                "Temporary Telegram network failure. Send the same phone number again to retry."
+            )
+            return
         await message.answer(
             "Could not request a login code. Check the number and try /auth again."
         )
@@ -526,6 +531,11 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         return
     except Exception as exc:
         logger.warning("Telegram code verification failed: %s", type(exc).__name__)
+        if is_transient_transport_error(exc):
+            await message.answer(
+                "Temporary Telegram network failure. Send the same login code again to retry."
+            )
+            return
         await message.answer("Code was rejected or expired. Run /auth to request a new code.")
         svc.pending_phone = svc.pending_code_hash = None
         await state.clear()
@@ -552,6 +562,11 @@ async def auth_password(message: Message, state: FSMContext) -> None:
         return
     except Exception as exc:
         logger.warning("Telegram 2FA verification failed: %s", type(exc).__name__)
+        if is_transient_transport_error(exc):
+            await message.answer(
+                "Temporary Telegram network failure. Send the 2FA password again to retry."
+            )
+            return
         await message.answer("2FA verification failed. Run /auth to start again.")
         svc.pending_phone = svc.pending_code_hash = None
         await state.clear()

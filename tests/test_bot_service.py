@@ -324,3 +324,82 @@ def test_direct_media_size_guard_fails_closed(file_size, expected):
         assert result is None
     else:
         assert expected in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "initial_state", "pending"),
+    [
+        ("phone", "phone", (None, None)),
+        ("code", "code", ("+123456789", "code-hash")),
+        ("password", "password", ("+123456789", "code-hash")),
+    ],
+)
+async def test_transient_auth_network_errors_preserve_login_flow(
+    handler_name, initial_state, pending, monkeypatch
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    import app.bot as bot_module
+
+    class FakeState:
+        def __init__(self):
+            self.current = initial_state
+            self.cleared = False
+
+        async def set_state(self, value):
+            self.current = value
+
+        async def clear(self):
+            self.cleared = True
+
+    class FakeMessage:
+        chat = SimpleNamespace(type="private")
+        from_user = SimpleNamespace(id=123456)
+
+        def __init__(self, text):
+            self.text = text
+            self.answers = []
+
+        async def delete(self):
+            return None
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    class BrokenClient:
+        async def send_code_request(self, phone):
+            raise ConnectionError("temporary network disconnect")
+
+        async def sign_in(self, **kwargs):
+            raise ConnectionError("temporary network disconnect")
+
+    settings = make_settings(Path(".").resolve() / ".test-state-unused")
+    service = SimpleNamespace(
+        settings=settings,
+        client=BrokenClient(),
+        mtproto_lock=asyncio.Lock(),
+        pending_phone=pending[0],
+        pending_code_hash=pending[1],
+        is_owner=lambda message: True,
+        wait_for_mtproto_cooldown=lambda: asyncio.sleep(0),
+        note_flood_wait=lambda seconds: None,
+    )
+    monkeypatch.setattr(bot_module, "get_service", lambda: service)
+    state = FakeState()
+    message = FakeMessage(
+        "+123456789" if handler_name == "phone" else "12345" if handler_name == "code" else "secret"
+    )
+    handler = {
+        "phone": bot_module.auth_phone,
+        "code": bot_module.auth_code,
+        "password": bot_module.auth_password,
+    }[handler_name]
+
+    await handler(message, state)
+
+    assert state.cleared is False
+    assert any("Temporary Telegram network failure" in text for text in message.answers)
+    assert service.pending_phone == pending[0]
+    assert service.pending_code_hash == pending[1]

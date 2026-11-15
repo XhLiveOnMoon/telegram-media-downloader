@@ -1,1 +1,0 @@
-"""Telegram media downloader application."""
