@@ -203,8 +203,15 @@ class DownloadTaskStore:
     def require_auth(self, task_id: int, detail: str) -> None:
         self._set_status(task_id, "auth_required", detail)
 
-    def cancel(self, task_id: int, detail: str = "Cancelled by owner") -> None:
-        self._set_status(task_id, "cancelled", detail)
+    def cancel(self, task_id: int, detail: str = "Cancelled by owner") -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE download_tasks SET status='cancelled', detail=?, "
+                "next_attempt_at=NULL, updated_at=? WHERE id=? "
+                "AND status IN ('queued','retry_wait','interrupted','auth_required')",
+                (detail[:1000], self._now(), task_id),
+            )
+            return cursor.rowcount == 1
 
     def retry_later(self, task_id: int, detail: str, delay_seconds: float) -> None:
         delay = max(0.0, delay_seconds)
@@ -214,6 +221,8 @@ class DownloadTaskStore:
                 "next_attempt_at=?, updated_at=? WHERE id=?",
                 (detail[:1000], time.time() + delay, self._now(), task_id),
             )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"Task {task_id} is not in downloading state")
 
     def set_global_cooldown(self, seconds: float, now: float | None = None) -> float:
         """Persist a server-mandated cooldown; never shorten an existing cooldown."""
@@ -239,11 +248,13 @@ class DownloadTaskStore:
 
     def _set_status(self, task_id: int, status: str, detail: str) -> None:
         with self._connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 "UPDATE download_tasks SET status=?, detail=?, next_attempt_at=NULL, "
-                "updated_at=? WHERE id=?",
+                "updated_at=? WHERE id=? AND status='downloading'",
                 (status, detail[:1000], self._now(), task_id),
             )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"Task {task_id} is not in downloading state")
 
     def resume_auth_required(self) -> int:
         """Requeue authorization-blocked work after the owner completes /auth."""
