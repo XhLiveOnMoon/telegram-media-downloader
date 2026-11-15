@@ -357,7 +357,7 @@ async def recover_interrupted_tasks(bot) -> None:
         await bot.send_message(
             svc.settings.owner_telegram_id,
             f"发现 {len(interrupted)} 个中断下载任务。Telegram 用户账号尚未授权，"
-            "任务和临时文件均已保留；完成 /auth 后重启服务即可自动恢复。",
+            "任务和临时文件均已保留；完成 /auth 后会自动恢复。",
         )
         return
 
