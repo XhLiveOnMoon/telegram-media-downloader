@@ -45,7 +45,7 @@ async def monitor_authorization(bot: Bot, owner_id: int) -> None:
             logging.getLogger(__name__).warning(
                 "Authorization monitor check failed: %s", type(exc).__name__
             )
-        await asyncio.sleep(300)
+        await asyncio.sleep(900)
 
 
 async def main() -> None:
