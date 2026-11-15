@@ -49,14 +49,19 @@ class DownloadWorker:
         self.retry_base_delay = max(0.1, retry_base_delay)
         self.retry_max_delay = max(self.retry_base_delay, retry_max_delay)
         self.active_task_id: int | None = None
+        self.operation_task: asyncio.Task | None = None
+        self.cancel_requested = False
         self.local_cooldown_until = 0.0
 
     def cancel_task(self, task_id: int) -> bool:
         """Cancel a queued task or request cancellation of the active download."""
-        if self.active_task_id == task_id and self.operation_task is not None:
+        if (
+            self.active_task_id == task_id
+            and self.operation_task is not None
+            and not self.operation_task.done()
+        ):
             self.cancel_requested = True
-            self.operation_task.cancel()
-            return True
+            return self.operation_task.cancel()
         return self.store.cancel(task_id)
 
     async def run(self) -> None:
@@ -106,6 +111,7 @@ class DownloadWorker:
             if self.cancel_requested:
                 self.store.cancel_active(task.task_id)
                 self.cancel_requested = False
+                self.operation_task = None
                 self.active_task_id = None
                 return
             try:
@@ -114,6 +120,7 @@ class DownloadWorker:
                 )
             except Exception:
                 logger.exception("Could not persist shutdown state for task %s", task.task_id)
+            self.operation_task = None
             self.active_task_id = None
             raise
         except FloodWait as exc:
