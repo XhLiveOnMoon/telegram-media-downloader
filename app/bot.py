@@ -85,6 +85,50 @@ class BotService:
         self.worker_task: asyncio.Task | None = None
         self.pending_phone: str | None = None
         self.pending_code_hash: str | None = None
+        self.auth_flow_generation = 0
+        self.auth_state_lock = asyncio.Lock()
+
+    async def begin_auth_flow(self, state: FSMContext, expected_generation: int) -> int | None:
+        """Start a fresh login flow only if no cancellation superseded the request."""
+        async with self.auth_state_lock:
+            if self.auth_flow_generation != expected_generation:
+                return None
+            self.auth_flow_generation += 1
+            self.pending_phone = self.pending_code_hash = None
+            await state.set_state(AuthFlow.phone)
+            return self.auth_flow_generation
+
+    async def transition_auth_flow(
+        self,
+        generation: int,
+        state: FSMContext,
+        next_state: State,
+        *,
+        phone: str | None = None,
+        code_hash: str | None = None,
+    ) -> bool:
+        """Apply an auth FSM transition only while its originating flow is current."""
+        async with self.auth_state_lock:
+            if self.auth_flow_generation != generation:
+                return False
+            if phone is not None:
+                self.pending_phone = phone
+            if code_hash is not None:
+                self.pending_code_hash = code_hash
+            await state.set_state(next_state)
+            return True
+
+    async def clear_auth_flow(
+        self, state: FSMContext, generation: int | None = None
+    ) -> bool:
+        """Invalidate in-flight login handlers and clear the owner FSM state."""
+        async with self.auth_state_lock:
+            if generation is not None and self.auth_flow_generation != generation:
+                return False
+            self.auth_flow_generation += 1
+            self.pending_phone = self.pending_code_hash = None
+            await state.clear()
+            return True
 
     @property
     def active_downloads(self) -> int:
@@ -445,6 +489,7 @@ async def auth_start(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
+    generation = svc.auth_flow_generation
     try:
         authorized = await svc.is_authorized()
     except FloodWaitError as exc:
@@ -459,10 +504,13 @@ async def auth_start(message: Message, state: FSMContext) -> None:
             "请稍后重试 /auth；当前不会将账号误判为未授权。"
         )
         return
+    if generation != svc.auth_flow_generation:
+        return
     if authorized:
         await message.answer("Telegram account is already authorized.")
         return
-    await state.set_state(AuthFlow.phone)
+    if await svc.begin_auth_flow(state, generation) is None:
+        return
     await message.answer("Send your phone number in international format, e.g. +1234567890.")
 
 
@@ -472,6 +520,7 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
     if not callback.from_user or callback.from_user.id != svc.settings.owner_telegram_id:
         await callback.answer("Not authorized", show_alert=True)
         return
+    generation = svc.auth_flow_generation
     try:
         authorized = await svc.is_authorized()
     except FloodWaitError as exc:
@@ -485,13 +534,18 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
             "暂时无法检查授权状态，请稍后重试。", show_alert=True
         )
         return
+    if generation != svc.auth_flow_generation:
+        await callback.answer("Authorization flow was cancelled", show_alert=True)
+        return
     if authorized:
         await callback.answer("Already authorized")
         await callback.bot.send_message(
             callback.from_user.id, "Telegram account is already authorized."
         )
         return
-    await state.set_state(AuthFlow.phone)
+    if await svc.begin_auth_flow(state, generation) is None:
+        await callback.answer("Authorization flow was cancelled", show_alert=True)
+        return
     await callback.answer()
     await callback.bot.send_message(
         callback.from_user.id,
@@ -499,9 +553,11 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
-async def _authorization_succeeded(message: Message, state: FSMContext, svc: BotService) -> None:
-    svc.pending_phone = svc.pending_code_hash = None
-    await state.clear()
+async def _authorization_succeeded(
+    message: Message, state: FSMContext, svc: BotService, generation: int
+) -> None:
+    if not await svc.clear_auth_flow(state, generation):
+        return
     resumed = svc.tasks.resume_auth_required()
     await message.answer(
         f"Authorization successful. {resumed} authorization-blocked task(s) returned to the queue."
@@ -513,14 +569,21 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
+    if not await _auth_state_matches(state, AuthFlow.phone):
+        return
+    generation = svc.auth_flow_generation
     phone = (message.text or "").strip()
     await _delete_sensitive_message(message)
+    if generation != svc.auth_flow_generation:
+        return
     if not phone.startswith("+") or not phone[1:].isdigit():
         await message.answer("Invalid phone number. Use international format, e.g. +1234567890.")
         return
     try:
         async with svc.mtproto_lock:
             await svc.wait_for_mtproto_cooldown()
+            if generation != svc.auth_flow_generation:
+                return
             sent = await svc.client.send_code_request(phone)
     except FloodWaitError as exc:
         svc.note_flood_wait(exc.seconds)
@@ -543,11 +606,12 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         await message.answer(
             "Could not request a login code. Check the number and try /auth again."
         )
-        await state.clear()
+        await svc.clear_auth_flow(state, generation)
         return
-    svc.pending_phone = phone
-    svc.pending_code_hash = sent.phone_code_hash
-    await state.set_state(AuthFlow.code)
+    if not await svc.transition_auth_flow(
+        generation, state, AuthFlow.code, phone=phone, code_hash=sent.phone_code_hash
+    ):
+        return
     await message.answer("Login code requested. Send the code you received in Telegram.")
 
 
@@ -556,23 +620,32 @@ async def auth_code(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
+    if not await _auth_state_matches(state, AuthFlow.code):
+        return
+    generation = svc.auth_flow_generation
+    phone = svc.pending_phone
+    code_hash = svc.pending_code_hash
     code = (message.text or "").replace(" ", "").strip()
     await _delete_sensitive_message(message)
-    if not code.isdigit() or not svc.pending_phone or not svc.pending_code_hash:
+    if generation != svc.auth_flow_generation:
+        return
+    if not code.isdigit() or not phone or not code_hash:
         await message.answer("Invalid or expired login flow. Run /auth again.")
-        await state.clear()
+        await svc.clear_auth_flow(state, generation)
         return
     try:
         async with svc.mtproto_lock:
             await svc.wait_for_mtproto_cooldown()
+            if generation != svc.auth_flow_generation:
+                return
             await svc.client.sign_in(
-                phone=svc.pending_phone,
+                phone=phone,
                 code=code,
-                phone_code_hash=svc.pending_code_hash,
+                phone_code_hash=code_hash,
             )
     except SessionPasswordNeededError:
-        await state.set_state(AuthFlow.password)
-        await message.answer("Two-step verification is enabled. Send your 2FA password.")
+        if await svc.transition_auth_flow(generation, state, AuthFlow.password):
+            await message.answer("Two-step verification is enabled. Send your 2FA password.")
         return
     except FloodWaitError as exc:
         svc.note_flood_wait(exc.seconds)
@@ -593,10 +666,9 @@ async def auth_code(message: Message, state: FSMContext) -> None:
             )
             return
         await message.answer("Code was rejected or expired. Run /auth to request a new code.")
-        svc.pending_phone = svc.pending_code_hash = None
-        await state.clear()
+        await svc.clear_auth_flow(state, generation)
         return
-    await _authorization_succeeded(message, state, svc)
+    await _authorization_succeeded(message, state, svc, generation)
 
 
 @router.message(AuthFlow.password, F.chat.type == "private", F.text, ~F.text.startswith("/"))
@@ -604,11 +676,18 @@ async def auth_password(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
+    if not await _auth_state_matches(state, AuthFlow.password):
+        return
+    generation = svc.auth_flow_generation
     password = (message.text or "").strip()
     await _delete_sensitive_message(message)
+    if generation != svc.auth_flow_generation:
+        return
     try:
         async with svc.mtproto_lock:
             await svc.wait_for_mtproto_cooldown()
+            if generation != svc.auth_flow_generation:
+                return
             await svc.client.sign_in(password=password)
     except FloodWaitError as exc:
         svc.note_flood_wait(exc.seconds)
@@ -655,8 +734,7 @@ async def cancel(
                 f"任务 #{task_id} 当前不存在或已进入不可取消状态。"
             )
         return
-    await state.clear()
-    svc.pending_phone = svc.pending_code_hash = None
+    await svc.clear_auth_flow(state)
     await message.answer("Current interaction cancelled.")
 
 
@@ -756,6 +834,14 @@ async def direct_media(message: Message) -> None:
     else:
         response = f"相同媒体的任务 #{task_id} 已存在，未重复创建。"
     await message.answer(response)
+
+
+async def _auth_state_matches(state: FSMContext, expected: State) -> bool:
+    """Ignore stale updates whose FSM state was cleared by a concurrent command."""
+    get_state = getattr(state, "get_state", None)
+    if get_state is None:
+        return True
+    return await get_state() == expected.state
 
 
 def build_dispatcher(settings: Settings, client: TelegramClient) -> Dispatcher:

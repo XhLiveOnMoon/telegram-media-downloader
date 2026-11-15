@@ -357,11 +357,15 @@ async def test_transient_auth_failures_preserve_login_flow(
             self.current = initial_state
             self.cleared = False
 
+        async def get_state(self):
+            return self.current
+
         async def set_state(self, value):
             self.current = value
 
         async def clear(self):
             self.cleared = True
+            self.current = None
 
     class FakeMessage:
         chat = SimpleNamespace(type="private")
@@ -391,6 +395,7 @@ async def test_transient_auth_failures_preserve_login_flow(
         mtproto_lock=asyncio.Lock(),
         pending_phone=pending[0],
         pending_code_hash=pending[1],
+        auth_flow_generation=0,
         is_owner=lambda message: True,
         wait_for_mtproto_cooldown=lambda: asyncio.sleep(0),
         note_flood_wait=lambda seconds: None,
@@ -557,6 +562,68 @@ async def test_direct_media_sqlite_failure_is_deferred_before_download(tmp_path:
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
+
+
+
+@pytest.mark.asyncio
+async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.bot import AuthFlow, BotService, auth_phone, cancel
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowClient:
+        async def send_code_request(self, phone):
+            started.set()
+            await release.wait()
+            return SimpleNamespace(phone_code_hash="late-code-hash")
+
+    class FakeState:
+        current = AuthFlow.phone.state
+
+        async def get_state(self):
+            return self.current
+
+        async def set_state(self, value):
+            self.current = value.state
+
+        async def clear(self):
+            self.current = None
+
+    class FakeMessage:
+        chat = SimpleNamespace(type="private")
+        from_user = SimpleNamespace(id=123456)
+
+        def __init__(self, text):
+            self.text = text
+            self.answers = []
+
+        async def delete(self):
+            return None
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    settings = make_settings(tmp_path)
+    service = BotService(settings, SlowClient())
+    monkeypatch.setattr("app.bot.get_service", lambda: service)
+    state = FakeState()
+    phone_message = FakeMessage("+123456789")
+    cancel_message = FakeMessage("/cancel")
+
+    phone_task = asyncio.create_task(auth_phone(phone_message, state))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    await cancel(cancel_message, state, SimpleNamespace(args=None))
+    release.set()
+    await asyncio.wait_for(phone_task, timeout=2)
+
+    assert state.current is None
+    assert service.pending_phone is None
+    assert service.pending_code_hash is None
+    assert service.auth_flow_generation == 1
 
 
 @pytest.mark.asyncio
