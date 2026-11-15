@@ -418,3 +418,17 @@ def test_floodwait_deferral_and_global_cooldown_are_atomic(tmp_path: Path):
     restarted = DownloadTaskStore(database)
     assert restarted.cooldown_remaining(now=1050) == 70
     assert restarted.claim_next(now=1050) is None
+
+
+
+def test_enqueue_with_status_reports_reused_and_created_tasks(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    source = "https://t.me/example/7890"
+
+    first_id, created = store.enqueue_with_status("message-link", source)
+    duplicate_id, duplicate_created = store.enqueue_with_status("message-link", source)
+
+    assert created is True
+    assert duplicate_created is False
+    assert duplicate_id == first_id
+    assert len(store.recent()) == 1

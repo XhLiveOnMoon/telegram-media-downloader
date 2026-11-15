@@ -681,8 +681,12 @@ async def download(message: Message, command: CommandObject) -> None:
     except ValueError as exc:
         await message.answer(str(exc))
         return
-    task_id = svc.tasks.enqueue("message-link", command.args)
-    await message.answer(f"任务 #{task_id} 已加入下载队列，当前采用全局单任务串行下载。")
+    task_id, created = svc.tasks.enqueue_with_status("message-link", command.args)
+    if created:
+        response = f"任务 #{task_id} 已加入下载队列，当前采用全局单任务串行下载。"
+    else:
+        response = f"相同来源的任务 #{task_id} 已存在，未重复创建。"
+    await message.answer(response)
 
 
 @router.message(
@@ -731,10 +735,14 @@ async def direct_media(message: Message) -> None:
         },
         ensure_ascii=False,
     )
-    task_id = svc.tasks.enqueue("direct-media", payload)
-    await message.answer(
-        f"直传文件任务 #{task_id} 已加入全局下载队列；当前任务完成后会自动处理。"
-    )
+    task_id, created = svc.tasks.enqueue_with_status("direct-media", payload)
+    if created:
+        response = (
+            f"直传文件任务 #{task_id} 已加入全局下载队列；当前任务完成后会自动处理。"
+        )
+    else:
+        response = f"相同媒体的任务 #{task_id} 已存在，未重复创建。"
+    await message.answer(response)
 
 
 def build_dispatcher(settings: Settings, client: TelegramClient) -> Dispatcher:

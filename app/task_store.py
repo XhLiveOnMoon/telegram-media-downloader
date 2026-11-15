@@ -209,6 +209,11 @@ class DownloadTaskStore:
 
     def enqueue(self, task_type: str, source: str) -> int:
         """Persist a task, reusing an identical task that is already non-terminal."""
+        task_id, _created = self.enqueue_with_status(task_type, source)
+        return task_id
+
+    def enqueue_with_status(self, task_type: str, source: str) -> tuple[int, bool]:
+        """Return the task ID and whether a new queue record was created."""
         normalized_source = source[:4000]
         now = self._now()
         with self._connect() as connection:
@@ -220,14 +225,14 @@ class DownloadTaskStore:
                 (task_type, normalized_source),
             ).fetchone()
             if existing is not None:
-                return int(existing["id"])
+                return int(existing["id"]), False
             cursor = connection.execute(
                 "INSERT INTO download_tasks "
                 "(task_type, source, status, created_at, updated_at) "
                 "VALUES (?, ?, 'queued', ?, ?)",
                 (task_type, normalized_source, now, now),
             )
-            return int(cursor.lastrowid)
+            return int(cursor.lastrowid), True
 
     def claim_next(self, now: float | None = None) -> DownloadTask | None:
         """Atomically claim the oldest due task, respecting the global FloodWait."""
