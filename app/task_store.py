@@ -97,7 +97,12 @@ class DownloadTaskStore:
                     WHEN 'failed' THEN 'failed'
                     ELSE 'failed'
                 END,
-                detail, created_at, updated_at
+                CASE
+                    WHEN status='running' AND detail=''
+                    THEN 'Service restarted before task completion'
+                    ELSE detail
+                END,
+                created_at, updated_at
             FROM download_tasks_legacy
             """
         )
