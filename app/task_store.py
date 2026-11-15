@@ -81,6 +81,9 @@ class DownloadTaskStore:
         # Rebuild rather than ALTER: the original table CHECK constraint does not
         # permit the queue states required by the durable scheduler.
         connection.execute("ALTER TABLE download_tasks RENAME TO download_tasks_legacy")
+        # Explicit indexes keep their names after a table rename.
+        connection.execute("DROP INDEX IF EXISTS idx_download_tasks_created")
+        connection.execute("DROP INDEX IF EXISTS idx_download_tasks_queue")
         self._create_schema(connection)
         connection.execute(
             """
