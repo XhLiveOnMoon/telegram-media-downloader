@@ -285,8 +285,8 @@ class DownloadTaskStore:
         """Requeue authorization-blocked work after the owner completes /auth."""
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE download_tasks SET status='queued', detail=?, updated_at=? "
-                "WHERE status='auth_required'",
+                "UPDATE download_tasks SET status='queued', detail=?, attempts=0, "
+                "next_attempt_at=NULL, updated_at=? WHERE status='auth_required'",
                 ("Requeued after Telegram authorization", self._now()),
             )
             return cursor.rowcount
