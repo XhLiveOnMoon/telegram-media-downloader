@@ -1,4 +1,5 @@
 import json
+import stat
 import time
 from pathlib import Path
 
@@ -59,6 +60,8 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path):
     assert task.task_id == task_id
     assert detail == final.name
     assert final.read_bytes() == content
+    assert stat.S_IMODE(final.stat().st_mode) == 0o644
+    assert stat.S_IMODE(settings.complete_dir.stat().st_mode) == 0o755
     assert not partial.exists()
     assert bot.messages and bot.messages[0][0] == settings.owner_telegram_id
 
