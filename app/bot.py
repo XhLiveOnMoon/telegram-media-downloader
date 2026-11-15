@@ -140,6 +140,7 @@ class BotService:
 
             raise ValueError(f"Unsupported task type: {task.task_type}")
         except FloodWaitError as exc:
+            self.tasks.set_global_cooldown(exc.seconds)
             await self._notify(
                 bot,
                 f"Telegram 触发 FloodWait，整个下载队列暂停 {exc.seconds} 秒；到期后自动继续。",
@@ -167,6 +168,7 @@ class BotService:
             if retry_after is not None:
                 seconds = getattr(retry_after, "total_seconds", None)
                 delay = seconds() if callable(seconds) else float(retry_after)
+                self.tasks.set_global_cooldown(delay)
                 await self._notify(
                     bot,
                     f"Telegram 要求等待 {int(delay)} 秒，整个下载队列将在等待结束后继续。",
