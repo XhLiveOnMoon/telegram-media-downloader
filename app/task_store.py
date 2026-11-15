@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,10 +52,18 @@ class DownloadTaskStore:
                 (self._now(),),
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.database, timeout=10)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     @staticmethod
     def _now() -> str:
@@ -86,7 +96,7 @@ class DownloadTaskStore:
     def recent(self, limit: int = 10) -> list[DownloadTask]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT id, task_type, source, status, detail, created_at, updated_at "
+                "SELECT id AS task_id, task_type, source, status, detail, created_at, updated_at "
                 "FROM download_tasks ORDER BY id DESC LIMIT ?",
                 (max(1, min(limit, 50)),),
             ).fetchall()
