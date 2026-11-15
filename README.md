@@ -111,6 +111,7 @@ The `data/` directory contains the Telethon session and the durable task databas
 
 ```bash
 docker compose stop
+umask 077
 tar -czf telegram-media-downloader-state-$(date +%F).tar.gz .env data
 docker compose start
 ```
