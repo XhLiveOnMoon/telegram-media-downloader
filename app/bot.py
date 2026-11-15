@@ -452,6 +452,13 @@ async def auth_start(message: Message, state: FSMContext) -> None:
             f"Telegram asks you to wait {exc.seconds} seconds before checking authorization."
         )
         return
+    except Exception as exc:
+        logger.warning("Authorization check failed: %s", type(exc).__name__)
+        await message.answer(
+            "暂时无法检查 Telegram 授权状态，可能是网络或本地会话存储暂时不可用。"
+            "请稍后重试 /auth；当前不会将账号误判为未授权。"
+        )
+        return
     if authorized:
         await message.answer("Telegram account is already authorized.")
         return
@@ -470,6 +477,12 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
     except FloodWaitError as exc:
         await callback.answer(
             f"Wait {exc.seconds} seconds before retrying authorization.", show_alert=True
+        )
+        return
+    except Exception as exc:
+        logger.warning("Authorization callback check failed: %s", type(exc).__name__)
+        await callback.answer(
+            "暂时无法检查授权状态，请稍后重试。", show_alert=True
         )
         return
     if authorized:

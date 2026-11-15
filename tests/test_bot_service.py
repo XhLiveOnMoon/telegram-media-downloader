@@ -557,3 +557,40 @@ async def test_direct_media_sqlite_failure_is_deferred_before_download(tmp_path:
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
+
+
+
+@pytest.mark.asyncio
+async def test_auth_start_reports_temporary_authorization_check_failure(tmp_path: Path, monkeypatch):
+    from app.bot import auth_start
+
+    class UnavailableService:
+        settings = make_settings(tmp_path)
+
+        def is_owner(self, message):
+            return True
+
+        async def is_authorized(self):
+            raise ConnectionError("temporary network outage")
+
+    class FakeMessage:
+        from_user = type("User", (), {"id": 123456})()
+
+        def __init__(self):
+            self.answers = []
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    class FakeState:
+        async def set_state(self, state):
+            raise AssertionError("FSM must not advance when authorization status is unknown")
+
+    monkeypatch.setattr("app.bot.get_service", lambda: UnavailableService())
+    message = FakeMessage()
+
+    await auth_start(message, FakeState())
+
+    assert len(message.answers) == 1
+    assert "暂时无法检查" in message.answers[0]
+    assert "不会将账号误判为未授权" in message.answers[0]
