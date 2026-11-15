@@ -295,5 +295,7 @@ async def test_worker_recovers_orphaned_task_after_state_write_failure(tmp_path)
     [task] = store.recent()
     assert task.task_id == task_id
     assert task.status == "completed"
-    assert task.attempts == 2
+    # Recovering a task after a SQLite state-write failure must not consume
+    # the network retry budget; the handler is safely re-entered idempotently.
+    assert task.attempts == 1
     assert handler_calls == 2
