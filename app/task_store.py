@@ -216,9 +216,9 @@ class DownloadTaskStore:
     def retry_later(self, task_id: int, detail: str, delay_seconds: float) -> None:
         delay = max(0.0, delay_seconds)
         with self._connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 "UPDATE download_tasks SET status='retry_wait', detail=?, "
-                "next_attempt_at=?, updated_at=? WHERE id=?",
+                "next_attempt_at=?, updated_at=? WHERE id=? AND status='downloading'",
                 (detail[:1000], time.time() + delay, self._now(), task_id),
             )
             if cursor.rowcount != 1:
