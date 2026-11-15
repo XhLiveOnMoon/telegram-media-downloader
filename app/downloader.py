@@ -148,7 +148,21 @@ class MediaDownloader:
         if link.kind == "public" and link.username:
             return await self.client.get_entity(link.username)
         if link.kind == "private" and link.channel_id:
-            return await self.client.get_entity(PeerChannel(link.channel_id))
+            try:
+                return await self.client.get_entity(PeerChannel(link.channel_id))
+            except ValueError:
+                # A t.me/c link contains only the channel ID, not its account-specific
+                # access hash. Populate Telethon's entity cache from dialogs on a miss.
+                async for dialog in self.client.iter_dialogs():
+                    entity = dialog.entity
+                    if (
+                        getattr(entity, "id", None) == link.channel_id
+                        and getattr(entity, "access_hash", None) is not None
+                    ):
+                        return entity
+                raise DownloadError(
+                    "Private channel is not present in this account's dialogs or is inaccessible."
+                )
         raise DownloadError("Invalid Telegram message link.")
 
     async def _album_messages(self, entity, message) -> list:

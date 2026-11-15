@@ -35,6 +35,52 @@ def make_message(size: int = 8192):
 
 
 @pytest.mark.asyncio
+async def test_private_link_resolves_uncached_channel_from_account_dialogs(tmp_path: Path):
+    from types import SimpleNamespace
+
+    from app.links import MessageLink
+
+    channel = SimpleNamespace(id=123456, access_hash=987654321)
+
+    class DialogClient:
+        async def get_entity(self, peer):
+            raise ValueError("Could not find input entity in cache")
+
+        async def iter_dialogs(self):
+            yield SimpleNamespace(entity=SimpleNamespace(id=999, access_hash=111))
+            yield SimpleNamespace(entity=channel)
+
+    downloader = MediaDownloader(DialogClient(), tmp_path / "complete", tmp_path / "incomplete")
+    entity = await downloader._resolve_entity(
+        MessageLink(kind="private", channel_id=123456, message_id=42)
+    )
+
+    assert entity is channel
+
+
+@pytest.mark.asyncio
+async def test_private_link_rejects_channel_not_found_in_account_dialogs(tmp_path: Path):
+    from types import SimpleNamespace
+
+    from app.downloader import DownloadError
+    from app.links import MessageLink
+
+    class DialogClient:
+        async def get_entity(self, peer):
+            raise ValueError("Could not find input entity in cache")
+
+        async def iter_dialogs(self):
+            yield SimpleNamespace(entity=SimpleNamespace(id=999, access_hash=111))
+
+    downloader = MediaDownloader(DialogClient(), tmp_path / "complete", tmp_path / "incomplete")
+
+    with pytest.raises(DownloadError, match="not present in this account"):
+        await downloader._resolve_entity(
+            MessageLink(kind="private", channel_id=123456, message_id=42)
+        )
+
+
+@pytest.mark.asyncio
 async def test_download_resumes_from_aligned_partial_file(tmp_path: Path):
     message = make_message()
     client = FakeClient([b"b" * 4096])
