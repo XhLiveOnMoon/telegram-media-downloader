@@ -25,6 +25,10 @@ class AuthorizationRequiredError(DownloadError):
     """The Telegram user session must be reauthorized before resuming."""
 
 
+class TransientDownloadError(DownloadError):
+    """A network failure exhausted the local retry window and should be rescheduled."""
+
+
 _AUTH_ERROR_NAMES = {
     "AuthKeyUnregisteredError",
     "AuthKeyDuplicatedError",
@@ -173,10 +177,9 @@ class MediaDownloader:
                 if partial.parent != self.complete_dir:
                     self._sync_directory(partial.parent)
                 return final
-            except FloodWaitError as exc:
-                raise DownloadError(
-                    f"Telegram rate limit: retry after {exc.seconds} seconds."
-                ) from exc
+            except FloodWaitError:
+                # The durable worker owns the global cooldown and retry schedule.
+                raise
             except DownloadError:
                 raise
             except Exception as exc:
@@ -215,7 +218,7 @@ class MediaDownloader:
 
                 if attempt >= self.max_network_retries:
                     logger.exception("Media download failed for message %s", message.id)
-                    raise DownloadError(
+                    raise TransientDownloadError(
                         f"Network/download failed after {attempt + 1} attempts "
                         f"({type(exc).__name__}: {exc}). Partial data was kept; resend the same "
                         "message link later to resume."
