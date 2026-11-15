@@ -337,3 +337,67 @@ def build_dispatcher(settings: Settings, client: TelegramClient) -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(router)
     return dispatcher
+
+
+async def recover_interrupted_tasks(bot) -> None:
+    """Replay durable message-link tasks after a process/container restart."""
+    svc = get_service()
+    interrupted = svc.tasks.interrupted()
+    if not interrupted:
+        return
+
+    try:
+        authorized = await svc.client.is_user_authorized()
+    except Exception as exc:
+        logger.warning("Cannot check Telegram authorization during recovery: %s", type(exc).__name__)
+        return
+    if not authorized:
+        await bot.send_message(
+            svc.settings.owner_telegram_id,
+            f"发现 {len(interrupted)} 个中断下载任务。Telegram 用户账号尚未授权，"
+            "任务和临时文件均已保留；完成 /auth 后重启服务即可自动恢复。",
+        )
+        return
+
+    await bot.send_message(
+        svc.settings.owner_telegram_id,
+        f"服务重启恢复：发现 {len(interrupted)} 个中断任务，开始检查并恢复。",
+    )
+    for task in interrupted:
+        if task.task_type != "message-link":
+            svc.tasks.fail(
+                task.task_id,
+                "Automatic recovery is unavailable for direct Bot API media; resend the file.",
+            )
+            continue
+        try:
+            link = parse_message_link(task.source)
+        except ValueError:
+            svc.tasks.fail(task.task_id, "Stored source link is invalid; submit it again.")
+            continue
+
+        svc.tasks.mark_running(task.task_id)
+        svc.active_downloads += 1
+        try:
+            paths = await svc.downloader.download(link)
+            svc.tasks.complete(task.task_id, ", ".join(path.name for path in paths))
+            await bot.send_message(
+                svc.settings.owner_telegram_id,
+                f"任务 #{task.task_id} 已在重启后恢复完成："
+                + ", ".join(path.name for path in paths),
+            )
+        except DownloadError as exc:
+            svc.tasks.fail(task.task_id, str(exc))
+            await bot.send_message(
+                svc.settings.owner_telegram_id,
+                f"任务 #{task.task_id} 自动恢复失败，临时文件已保留：{exc}",
+            )
+        except Exception as exc:
+            logger.exception("Restart recovery failed for task %s", task.task_id)
+            svc.tasks.fail(task.task_id, type(exc).__name__)
+            await bot.send_message(
+                svc.settings.owner_telegram_id,
+                f"任务 #{task.task_id} 自动恢复遇到内部错误（{type(exc).__name__}）。",
+            )
+        finally:
+            svc.active_downloads -= 1
