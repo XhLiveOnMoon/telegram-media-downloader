@@ -42,6 +42,25 @@ def test_download_paths_must_be_telegram_scoped_siblings(tmp_path: Path):
         )
 
 
+def test_download_paths_reject_symlink_escape(tmp_path: Path):
+    outside_complete = tmp_path / "outside" / "complete" / "telegram"
+    outside_complete.mkdir(parents=True)
+    complete_link = tmp_path / "downloads" / "complete" / "telegram"
+    complete_link.parent.mkdir(parents=True)
+    complete_link.symlink_to(outside_complete, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="real sibling"):
+        Settings(
+            bot_token="test-token",
+            api_id=12345,
+            api_hash="test-hash",
+            owner_telegram_id=123456,
+            data_dir=tmp_path / "state",
+            complete_dir=complete_link,
+            incomplete_dir=tmp_path / "downloads" / "incomplete" / "telegram",
+        )
+
+
 def test_default_download_paths_are_telegram_scoped(monkeypatch):
     set_required_environment(monkeypatch)
     monkeypatch.delenv("MAX_CONCURRENT_DOWNLOADS", raising=False)

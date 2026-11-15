@@ -23,7 +23,9 @@ class Settings:
         complete = self.complete_dir.resolve()
         incomplete = self.incomplete_dir.resolve()
         valid_layout = (
-            complete.name == "telegram"
+            complete == self.complete_dir.absolute()
+            and incomplete == self.incomplete_dir.absolute()
+            and complete.name == "telegram"
             and complete.parent.name == "complete"
             and incomplete.name == "telegram"
             and incomplete.parent.name == "incomplete"
@@ -31,7 +33,7 @@ class Settings:
         )
         if not valid_layout:
             raise ValueError(
-                "Download paths must be sibling Telegram-only directories: "
+                "Download paths must be real sibling Telegram-only directories: "
                 "<downloads>/complete/telegram and <downloads>/incomplete/telegram"
             )
 
