@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from telethon import TelegramClient
 
-from .bot import build_dispatcher
+from .bot import build_dispatcher, recover_interrupted_tasks
 from .config import Settings
 
 
@@ -53,6 +53,7 @@ async def main() -> None:
     await client.connect()
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = build_dispatcher(settings, client)
+    await recover_interrupted_tasks(bot)
     monitor_task = asyncio.create_task(
         monitor_authorization(bot, client, settings.owner_telegram_id)
     )
