@@ -4,6 +4,7 @@ import asyncio
 import errno
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from telethon import TelegramClient
@@ -16,6 +17,7 @@ from .storage import safe_filename, stable_partial_path
 
 logger = logging.getLogger(__name__)
 _CHECKPOINT_BYTES = 8 * 1024 * 1024
+ProgressCallback = Callable[[int, int | None, str], None]
 
 
 class DownloadError(RuntimeError):
@@ -56,7 +58,9 @@ class MediaDownloader:
         self.retry_base_delay = max(0.1, retry_base_delay)
         self._semaphore = asyncio.Semaphore(max_concurrent_downloads)
 
-    async def download(self, link: MessageLink) -> list[Path]:
+    async def download(
+        self, link: MessageLink, progress_callback: ProgressCallback | None = None
+    ) -> list[Path]:
         async with self._semaphore:
             try:
                 entity = await self._resolve_entity(link)
@@ -79,7 +83,11 @@ class MediaDownloader:
             for item in messages:
                 if not item or not item.media:
                     continue
-                results.append(await self._download_one(item, entity=entity))
+                results.append(
+                    await self._download_one(
+                        item, entity=entity, progress_callback=progress_callback
+                    )
+                )
             if not results:
                 raise DownloadError("The selected message does not contain downloadable media.")
             return results
@@ -128,12 +136,39 @@ class MediaDownloader:
         finally:
             os.close(descriptor)
 
-    async def _download_one(self, message, entity=None) -> Path:
+    @staticmethod
+    def _report_progress(
+        callback: ProgressCallback | None,
+        downloaded: int,
+        total: int | None,
+        filename: str,
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            callback(downloaded, total, filename)
+        except Exception as exc:
+            logger.warning("Could not persist download progress: %s", type(exc).__name__)
+
+    async def _download_one(
+        self,
+        message,
+        entity=None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> Path:
         source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
         # The downloader semaphore and durable worker serialize all file writes.
-        return await self._download_one_locked(message, entity, source_key)
+        return await self._download_one_locked(
+            message, entity, source_key, progress_callback
+        )
 
-    async def _download_one_locked(self, message, entity, source_key: str) -> Path:
+    async def _download_one_locked(
+        self,
+        message,
+        entity,
+        source_key: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> Path:
         document = getattr(message, "document", None)
         original_name = None
         if document:
@@ -151,6 +186,7 @@ class MediaDownloader:
             os.chmod(final, 0o644)
             with final.open("rb+") as stream:
                 os.fsync(stream.fileno())
+            self._report_progress(progress_callback, final.stat().st_size, size, filename)
             return final
 
         network_attempt = 0
@@ -171,10 +207,12 @@ class MediaDownloader:
                         os.fsync(stream.fileno())
                     offset = aligned_offset
 
+                self._report_progress(progress_callback, offset, size, filename)
                 if not (size and offset == size):
                     partial.parent.mkdir(parents=True, exist_ok=True)
                     with partial.open("ab") as stream:
                         since_checkpoint = 0
+                        downloaded = offset
                         try:
                             async for chunk in self.client.iter_download(
                                 message.media,
@@ -183,10 +221,14 @@ class MediaDownloader:
                                 chunk_size=512 * 1024,
                             ):
                                 stream.write(chunk)
+                                downloaded += len(chunk)
                                 since_checkpoint += len(chunk)
                                 if since_checkpoint >= _CHECKPOINT_BYTES:
                                     stream.flush()
                                     os.fsync(stream.fileno())
+                                    self._report_progress(
+                                        progress_callback, downloaded, size, filename
+                                    )
                                     since_checkpoint = 0
                         finally:
                             # Persist every yielded byte before retrying or propagating errors.
@@ -195,6 +237,7 @@ class MediaDownloader:
                             self._sync_directory(partial.parent)
 
                 actual_size = partial.stat().st_size
+                self._report_progress(progress_callback, actual_size, size, filename)
                 if size and actual_size != size:
                     raise ConnectionError(
                         f"Incomplete download ({actual_size}/{size} bytes); retry to resume."
