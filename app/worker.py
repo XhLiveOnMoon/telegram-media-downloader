@@ -165,6 +165,7 @@ class DownloadWorker:
                 task.task_id,
                 f"Telegram requested a global cooldown of {exc.seconds} seconds",
                 delay,
+                preserve_attempts=True,
             )
             logger.warning(
                 "Task %s paused by Telegram FloodWait; global cooldown %.1fs",

@@ -65,12 +65,16 @@ def test_queue_claim_is_atomic_and_fifo(tmp_path: Path):
     assert claimed.status == "downloading"
     assert claimed.attempts == 1
 
-    # A second scheduler cannot claim the task already claimed by the first.
-    assert second.claim_next() is not None
+    # A second scheduler cannot claim another task while one is active.
     assert second.claim_next() is None
     [remaining] = second.recent(limit=1)
     assert remaining.task_id == second_id
-    assert remaining.status == "downloading"
+    assert remaining.status == "queued"
+    first.complete(first_id, "first.bin")
+    next_claim = second.claim_next()
+    assert next_claim is not None
+    assert next_claim.task_id == second_id
+    assert next_claim.status == "downloading"
 
 
 def test_retry_wait_is_not_claimed_before_due_time(tmp_path: Path):
@@ -119,7 +123,7 @@ def test_interrupted_tasks_can_be_recovered_once(tmp_path: Path):
     recovered = restarted_instance.claim_next()
     assert recovered.task_id == task_id
     assert recovered.status == "downloading"
-    assert recovered.attempts == 2
+    assert recovered.attempts == 1
 
 
 def test_authorization_blocked_task_remains_recoverable(tmp_path: Path):
@@ -249,3 +253,114 @@ def test_existing_queue_schema_is_upgraded_with_progress_columns(tmp_path: Path)
     assert task.total_bytes is None
     assert task.current_file == ""
     assert store.cooldown_remaining() == 0
+
+
+def test_existing_queue_schema_repairs_missing_scheduler_state(tmp_path: Path):
+    database = tmp_path / "tasks.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE download_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL,
+                progress_bytes INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER,
+                current_file TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO download_tasks "
+            "(task_type, source, status, created_at, updated_at) "
+            "VALUES ('message-link', 'https://t.me/example/900', 'queued', 'now', 'now')"
+        )
+
+    store = DownloadTaskStore(database)
+    claimed = store.claim_next()
+    assert claimed is not None
+    assert claimed.source.endswith("/900")
+    assert store.cooldown_remaining() == 0
+
+
+def test_floodwait_retry_does_not_consume_attempt_budget(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/901")
+    assert store.claim_next() is not None
+
+    store.retry_later(task_id, "FloodWait", 60, preserve_attempts=True)
+
+    [task] = store.recent()
+    assert task.status == "retry_wait"
+    assert task.attempts == 0
+
+
+def test_authorization_resume_resets_retry_budget(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/902")
+    assert store.claim_next() is not None
+    store.require_auth(task_id, "authorization required")
+    assert store.resume_auth_required() == 1
+
+    [task] = store.recent()
+    assert task.status == "queued"
+    assert task.attempts == 0
+
+
+def test_intermediate_schema_with_old_status_check_is_rebuilt(tmp_path: Path):
+    database = tmp_path / "tasks.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE download_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (
+                    status IN ('queued', 'downloading', 'completed', 'failed', 'interrupted')
+                ),
+                detail TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL,
+                progress_bytes INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER,
+                current_file TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO download_tasks "
+            "(task_type, source, status, detail, created_at, updated_at, attempts, "
+            "progress_bytes, total_bytes, current_file) "
+            "VALUES ('message-link', 'https://t.me/example/903', 'queued', '', "
+            "'now', 'now', 2, 1024, 4096, 'movie.bin')"
+        )
+
+    store = DownloadTaskStore(database)
+    [task] = store.recent()
+    assert task.status == "queued"
+    assert task.attempts == 2
+    assert task.progress_bytes == 1024
+    assert task.total_bytes == 4096
+    assert task.current_file == "movie.bin"
+    assert store.claim_next().task_id == task.task_id
+
+
+def test_interruption_does_not_consume_retry_budget(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/904")
+    assert store.claim_next().attempts == 1
+
+    store.interrupt(task_id, "service stopping")
+
+    [task] = store.recent()
+    assert task.status == "interrupted"
+    assert task.attempts == 0

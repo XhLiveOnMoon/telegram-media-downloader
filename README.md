@@ -42,10 +42,9 @@ mkdir -p /data/media/downloads/complete/telegram
 mkdir -p /data/media/downloads/incomplete/telegram
 chown -R 1001:1001 data /data/media/downloads/complete/telegram /data/media/downloads/incomplete/telegram
 chmod 755 /data/media/downloads /data/media/downloads/complete /data/media/downloads/incomplete
-chmod 755 /data/media/downloads/complete/qbittorrent /data/media/downloads/incomplete/qbittorrent
 ```
 
-The container mounts the downloads root once so incomplete-to-complete promotion stays on one mount and can use an atomic rename. It runs as UID 1001; the qBittorrent directories remain owned by UID 1000 and are not writable by this service. The application itself only writes under the two Telegram subdirectories. Telegram download directories are mode `755`, completed media files are mode `644` for read access by Jellyfin/other containers, and in-progress partial files remain private until promotion. The application state directory is mode `700`; the process umask keeps the Telethon session and SQLite state files private. `MAX_CONCURRENT_DOWNLOADS` must remain `1`; the setting is validated at startup.
+The container mounts the downloads root once so incomplete-to-complete promotion stays on one mount and can use an atomic rename. It runs as UID 1001; the qBittorrent directories remain owned by UID 1000 and are not writable by this service. The application validates at startup that its complete and incomplete paths are sibling `telegram` directories; it refuses configurations pointing at qBittorrent or other media folders. It only writes under those two Telegram subdirectories. Telegram download directories are mode `755`, completed media files are mode `644` for read access by Jellyfin/other containers, and in-progress partial files remain private until promotion. The application state directory is mode `700`; the process umask keeps the Telethon session and SQLite state files private. `MAX_CONCURRENT_DOWNLOADS` must remain `1`; the setting is validated at startup.
 
 Configure secrets:
 
@@ -129,7 +128,7 @@ pytest -q
 python -m compileall -q app
 ```
 
-GitHub Actions runs lint, unit tests, and Python bytecode compilation on pushes and pull requests.
+GitHub Actions is configured for manual execution from the repository Actions tab (`workflow_dispatch`); it runs lint, unit tests, Python bytecode compilation, Compose validation, and image build.
 
 ## Current limitations
 

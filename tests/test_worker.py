@@ -57,6 +57,7 @@ async def test_floodwait_persists_global_cooldown_and_requeues_task(tmp_path):
     [task] = store.recent()
     assert task.task_id == task_id
     assert task.status == "retry_wait"
+    assert task.attempts == 0
     assert store.cooldown_remaining() > 3500
 
     restarted = DownloadTaskStore(tmp_path / "tasks.sqlite3")
@@ -92,6 +93,7 @@ async def test_authorization_error_pauses_task_without_retry(tmp_path):
     assert store.resume_auth_required() == 1
     [task] = store.recent()
     assert task.status == "queued"
+    assert task.attempts == 0
 
 
 @pytest.mark.asyncio
@@ -148,7 +150,7 @@ async def test_worker_shutdown_marks_active_task_interrupted(tmp_path):
     restarted = DownloadTaskStore(database)
     recovered = restarted.claim_next()
     assert recovered.task_id == task_id
-    assert recovered.attempts == 2
+    assert recovered.attempts == 1
 
 
 @pytest.mark.asyncio

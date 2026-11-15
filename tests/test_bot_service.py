@@ -30,13 +30,13 @@ def make_settings(tmp_path: Path) -> Settings:
         api_hash="test-hash",
         owner_telegram_id=123456,
         data_dir=tmp_path / "state",
-        complete_dir=tmp_path / "downloads" / "complete",
-        incomplete_dir=tmp_path / "downloads" / "incomplete",
+        complete_dir=tmp_path / "downloads" / "complete" / "telegram",
+        incomplete_dir=tmp_path / "downloads" / "incomplete" / "telegram",
     )
 
 
 @pytest.mark.asyncio
-async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path):
+async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path, monkeypatch):
     content = b"telegram test media" * 128
     settings = make_settings(tmp_path)
     prepare_directories(settings.complete_dir, settings.incomplete_dir)
@@ -54,14 +54,24 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path):
     )
     task = service.tasks.claim_next()
     bot = FakeBot(content)
+    final = settings.complete_dir / "bot-123-456-sample.bin"
+    opened_modes = []
+    original_open = Path.open
+
+    def track_open(path, mode="r", *args, **kwargs):
+        if path == final:
+            opened_modes.append(mode)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", track_open)
 
     detail = await service.execute_task(task, bot)
 
-    final = settings.complete_dir / "bot-123-456-sample.bin"
     partial = settings.incomplete_dir / "bot-123-456-sample.bin.part"
     assert task.task_id == task_id
     assert detail == final.name
     assert final.read_bytes() == content
+    assert "rb+" in opened_modes
     assert stat.S_IMODE(final.stat().st_mode) == 0o644
     assert stat.S_IMODE(settings.complete_dir.stat().st_mode) == 0o755
     assert not partial.exists()
@@ -123,3 +133,104 @@ async def test_mtproto_authorization_waits_for_persisted_global_cooldown(tmp_pat
     assert elapsed >= 0.04
     assert client.calls == 1
     assert service.tasks.cooldown_remaining() <= 0.01
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_completion_notification_keeps_download_completed(tmp_path: Path):
+    import asyncio
+
+    class BlockingNotificationBot(FakeBot):
+        def __init__(self, content: bytes):
+            super().__init__(content)
+            self.notification_started = asyncio.Event()
+
+        async def send_message(self, chat_id, text):
+            self.notification_started.set()
+            await asyncio.Future()
+
+    content = b"durable media" * 128
+    settings = make_settings(tmp_path)
+    prepare_directories(settings.complete_dir, settings.incomplete_dir)
+    service = BotService(settings, client=object())
+    task_id = service.tasks.enqueue(
+        "direct-media",
+        json.dumps({
+            "file_id": "opaque-file-id",
+            "filename": "committed.bin",
+            "file_size": len(content),
+            "source_key": "bot-123-999",
+        }),
+    )
+    task = service.tasks.claim_next()
+    bot = BlockingNotificationBot(content)
+
+    operation = asyncio.create_task(service.execute_task(task, bot))
+    await asyncio.wait_for(bot.notification_started.wait(), timeout=2)
+    operation.cancel()
+    result = await asyncio.wait_for(operation, timeout=2)
+
+    assert task.task_id == task_id
+    assert result == "bot-123-999-committed.bin"
+    assert (settings.complete_dir / result).read_bytes() == content
+
+
+@pytest.mark.asyncio
+async def test_existing_direct_media_file_is_made_readable(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    prepare_directories(settings.complete_dir, settings.incomplete_dir)
+    service = BotService(settings, client=object())
+    final = settings.complete_dir / "bot-123-777-existing.bin"
+    final.write_bytes(b"already committed")
+    final.chmod(0o600)
+    task_id = service.tasks.enqueue(
+        "direct-media",
+        json.dumps({
+            "file_id": "opaque-file-id",
+            "filename": "existing.bin",
+            "file_size": len(b"already committed"),
+            "source_key": "bot-123-777",
+        }),
+    )
+    task = service.tasks.claim_next()
+
+    result = await service.execute_task(task, FakeBot(b"unused"))
+
+    assert task.task_id == task_id
+    assert result == final.name
+    assert stat.S_IMODE(final.stat().st_mode) == 0o644
+
+
+@pytest.mark.asyncio
+async def test_direct_media_promotion_syncs_both_directories(tmp_path: Path):
+    content = b"durable direct media" * 64
+    settings = make_settings(tmp_path)
+    prepare_directories(settings.complete_dir, settings.incomplete_dir)
+    service = BotService(settings, client=object())
+    task_id = service.tasks.enqueue(
+        "direct-media",
+        json.dumps(
+            {
+                "file_id": "opaque-file-id",
+                "filename": "durable.bin",
+                "file_size": len(content),
+                "source_key": "bot-123-654",
+            }
+        ),
+    )
+    task = service.tasks.claim_next()
+    bot = FakeBot(content)
+    synced = []
+    original_sync = service._sync_directory
+
+    def record_sync(directory):
+        synced.append(Path(directory))
+        original_sync(directory)
+
+    service._sync_directory = record_sync
+
+    await service.execute_task(task, bot)
+
+    assert task.task_id == task_id
+    assert settings.complete_dir in synced
+    assert settings.incomplete_dir in synced
+
