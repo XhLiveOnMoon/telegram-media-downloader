@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from html import escape as html_escape
 import json
 import logging
 import os
+from html import escape as html_escape
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandObject
@@ -76,13 +76,21 @@ class BotService:
                 return
             await asyncio.sleep(remaining)
 
+    def note_flood_wait(self, seconds: float) -> None:
+        if self.worker is not None:
+            self.worker.extend_local_cooldown(seconds)
+        try:
+            self.tasks.set_global_cooldown(seconds)
+        except Exception:
+            logger.exception("Could not persist Telegram FloodWait cooldown")
+
     async def is_authorized(self) -> bool:
         try:
             async with self.mtproto_lock:
                 await self.wait_for_mtproto_cooldown()
                 return await self.client.is_user_authorized()
         except FloodWaitError as exc:
-            self.tasks.set_global_cooldown(exc.seconds)
+            self.note_flood_wait(exc.seconds)
             raise
 
     def start_worker(self, bot: Bot) -> asyncio.Task:
@@ -141,7 +149,7 @@ class BotService:
 
             raise ValueError(f"Unsupported task type: {task.task_type}")
         except FloodWaitError as exc:
-            self.tasks.set_global_cooldown(exc.seconds)
+            self.note_flood_wait(exc.seconds)
             await self._notify(
                 bot,
                 f"Telegram 触发 FloodWait，整个下载队列暂停 {exc.seconds} 秒；到期后自动继续。",
@@ -173,7 +181,7 @@ class BotService:
             if retry_after is not None:
                 seconds = getattr(retry_after, "total_seconds", None)
                 delay = seconds() if callable(seconds) else float(retry_after)
-                self.tasks.set_global_cooldown(delay)
+                self.note_flood_wait(delay)
                 await self._notify(
                     bot,
                     f"Telegram 要求等待 {int(delay)} 秒，整个下载队列将在等待结束后继续。",
