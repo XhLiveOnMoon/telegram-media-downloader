@@ -66,6 +66,45 @@ class TransientDownloadError(DownloadError):
     """A network failure exhausted the local retry window and should be rescheduled."""
 
 
+def _expected_media_size(message) -> int | None:
+    """Return the size Telethon's iter_download uses for this Document or Photo."""
+    document = getattr(message, "document", None)
+    if document is not None:
+        size = getattr(document, "size", None)
+        if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
+            return size
+        raise DownloadError("Telegram document has no valid file size; refusing unchecked download.")
+
+    photo = getattr(message, "photo", None)
+    if photo is None:
+        return None
+    sizes = getattr(photo, "sizes", None)
+    if not sizes:
+        raise DownloadError("Telegram photo has no downloadable size metadata.")
+
+    # Telethon 1.x resolves MessageMediaPhoto through photo.sizes[-1] when
+    # constructing its InputPhotoFileLocation.
+    selected = sizes[-1]
+    size = getattr(selected, "size", None)
+    if size is None:
+        progressive_sizes = getattr(selected, "sizes", None)
+        if progressive_sizes:
+            size = max(progressive_sizes)
+    if size is None and hasattr(selected, "bytes"):
+        photo_bytes = selected.bytes
+        size = len(photo_bytes)
+        if type(selected).__name__ == "PhotoStrippedSize":
+            if len(photo_bytes) >= 3 and photo_bytes[0] == 1:
+                size += 622
+    if type(selected).__name__ == "PhotoSizeEmpty":
+        raise DownloadError("Telegram photo has no downloadable full-size image.")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise DownloadError(
+            "Telegram photo size cannot be verified; refusing to promote an unchecked file."
+        )
+    return size
+
+
 _AUTH_ERROR_NAMES = {
     "AuthKeyUnregisteredError",
     "AuthKeyInvalidError",
@@ -231,8 +270,8 @@ class MediaDownloader:
         partial = stable_partial_path(self.incomplete_dir, source_key)
         final = self.complete_dir / f"{source_key}-{filename}"
         self.complete_dir.mkdir(parents=True, exist_ok=True)
-        size = getattr(document, "size", None) if document else None
-        if final.exists() and (not size or final.stat().st_size == size):
+        size = _expected_media_size(message)
+        if final.exists() and (size is None or final.stat().st_size == size):
             os.chmod(final, 0o644)
             with final.open("rb+") as stream:
                 os.fsync(stream.fileno())
@@ -245,7 +284,7 @@ class MediaDownloader:
         while True:
             try:
                 offset = partial.stat().st_size if partial.exists() else 0
-                if size and offset > size:
+                if size is not None and offset > size:
                     partial.unlink(missing_ok=True)
                     offset = 0
 
@@ -259,7 +298,7 @@ class MediaDownloader:
                     offset = aligned_offset
 
                 self._report_progress(progress_callback, offset, size, filename)
-                if not (size and offset == size):
+                if not (size is not None and offset == size):
                     partial.parent.mkdir(parents=True, exist_ok=True)
                     with partial.open("ab") as stream:
                         os.chmod(partial, 0o600)
@@ -290,7 +329,7 @@ class MediaDownloader:
 
                 actual_size = partial.stat().st_size
                 self._report_progress(progress_callback, actual_size, size, filename)
-                if size and actual_size != size:
+                if size is not None and actual_size != size:
                     raise ConnectionError(
                         f"Incomplete download ({actual_size}/{size} bytes); retry to resume."
                     )

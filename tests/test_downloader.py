@@ -88,6 +88,67 @@ async def test_private_link_rejects_channel_not_found_in_account_dialogs(tmp_pat
         )
 
 
+
+
+
+@pytest.mark.asyncio
+async def test_photo_download_uses_photo_size_for_integrity_check(tmp_path: Path):
+    message = SimpleNamespace(
+        id=43,
+        peer_id=PeerChannel(123456),
+        media=object(),
+        photo=SimpleNamespace(id=9002, sizes=[SimpleNamespace(size=8192)]),
+        document=None,
+        grouped_id=None,
+    )
+    client = FakeClient([b"p" * 8192])
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+
+    result = await downloader._download_one(message)
+
+    assert result.read_bytes() == b"p" * 8192
+    assert result.name.endswith("-telegram-43.jpg")
+
+
+@pytest.mark.asyncio
+async def test_truncated_photo_is_not_promoted_to_completed_file(tmp_path: Path):
+    message = SimpleNamespace(
+        id=44,
+        peer_id=PeerChannel(123456),
+        media=object(),
+        photo=SimpleNamespace(id=9003, sizes=[SimpleNamespace(size=8192)]),
+        document=None,
+        grouped_id=None,
+    )
+    client = FakeClient([b"p" * 1024])
+    downloader = MediaDownloader(
+        client, tmp_path / "complete", tmp_path / "incomplete", max_network_retries=0
+    )
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
+    partial = stable_partial_path(tmp_path / "incomplete", source_key)
+
+    with pytest.raises(TransientDownloadError, match="Partial data was kept"):
+        await downloader._download_one(message)
+
+    assert partial.exists()
+    assert partial.stat().st_size == 1024
+    assert not list((tmp_path / "complete").glob("*"))
+
+
+def test_progressive_photo_size_uses_largest_prefix():
+    from app.downloader import _expected_media_size
+
+    class PhotoSizeProgressive:
+        sizes = [1024, 4096, 8192]
+
+    message = SimpleNamespace(
+        document=None,
+        photo=SimpleNamespace(id=9004, sizes=[PhotoSizeProgressive()]),
+    )
+
+    assert _expected_media_size(message) == 8192
+
+
 @pytest.mark.asyncio
 async def test_download_resumes_from_aligned_partial_file(tmp_path: Path):
     message = make_message()
