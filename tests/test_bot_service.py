@@ -65,6 +65,9 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path):
     assert stat.S_IMODE(final.stat().st_mode) == 0o644
     assert stat.S_IMODE(settings.complete_dir.stat().st_mode) == 0o755
     assert not partial.exists()
+    [stored] = service.tasks.recent()
+    assert stored.progress_bytes == stored.total_bytes == len(content)
+    assert stored.current_file == "sample.bin"
     assert bot.messages and bot.messages[0][0] == settings.owner_telegram_id
 
 
@@ -94,6 +97,8 @@ async def test_direct_media_rejects_size_mismatch_for_worker_retry(tmp_path: Pat
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
+    assert stored.progress_bytes == 4
+    assert stored.total_bytes == 100
 
 
 @pytest.mark.asyncio
