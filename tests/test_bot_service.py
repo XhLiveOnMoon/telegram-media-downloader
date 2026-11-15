@@ -5,7 +5,6 @@ import pytest
 
 from app.bot import BotService
 from app.config import Settings
-from app.task_store import DownloadTaskStore
 
 
 class FakeBot:
