@@ -197,6 +197,11 @@ class BotService:
         try:
             await bot.send_message(self.settings.owner_telegram_id, text)
         except Exception as exc:
+            retry_after = getattr(exc, "retry_after", None)
+            if retry_after is not None:
+                seconds = getattr(retry_after, "total_seconds", None)
+                delay = seconds() if callable(seconds) else float(retry_after)
+                self.tasks.set_global_cooldown(delay)
             # Notification failure must not turn an already-saved file into a failed task.
             logger.warning("Could not send task notification: %s", type(exc).__name__)
 
