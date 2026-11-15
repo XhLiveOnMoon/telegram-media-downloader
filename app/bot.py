@@ -121,21 +121,48 @@ class BotService:
 
             raise ValueError(f"Unsupported task type: {task.task_type}")
         except FloodWaitError as exc:
+            await self._notify(
+                bot,
+                f"Telegram 触发 FloodWait，整个下载队列暂停 {exc.seconds} 秒；到期后自动继续。",
+            )
             raise FloodWait(exc.seconds) from exc
         except AuthorizationRequiredError as exc:
+            await self._notify(
+                bot, f"任务 #{task.task_id} 已暂停：Telegram 用户账号需要重新授权，请私聊发送 /auth。"
+            )
             raise AuthorizationRequired(str(exc)) from exc
         except TransientDownloadError as exc:
+            if self.worker and task.attempts >= self.worker.max_attempts:
+                await self._notify(
+                    bot, f"任务 #{task.task_id} 多次网络重试仍失败，已停止自动重试：{exc}"
+                )
             raise RetryableTaskError(str(exc)) from exc
+        except RetryableTaskError as exc:
+            if self.worker and task.attempts >= self.worker.max_attempts:
+                await self._notify(
+                    bot, f"任务 #{task.task_id} 多次重试仍失败，已停止自动重试：{exc}"
+                )
+            raise
         except Exception as exc:
             retry_after = getattr(exc, "retry_after", None)
             if retry_after is not None:
                 seconds = getattr(retry_after, "total_seconds", None)
                 delay = seconds() if callable(seconds) else float(retry_after)
+                await self._notify(
+                    bot,
+                    f"Telegram 要求等待 {int(delay)} 秒，整个下载队列将在等待结束后继续。",
+                )
                 raise FloodWait(int(delay)) from exc
             if type(exc).__name__ in {
                 "TelegramNetworkError", "TelegramServerError", "ServerError",
                 "TimedOutError", "RpcCallFailError", "ConnectionError", "TimeoutError",
             }:
+                if self.worker and task.attempts >= self.worker.max_attempts:
+                    await self._notify(
+                        bot,
+                        f"任务 #{task.task_id} 多次网络重试仍失败，已停止自动重试："
+                        f"{type(exc).__name__}",
+                    )
                 raise RetryableTaskError(
                     f"Telegram transport error: {type(exc).__name__}"
                 ) from exc
