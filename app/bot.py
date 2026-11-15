@@ -143,6 +143,7 @@ class BotService:
                 if final.exists() and (
                     file_size is None or final.stat().st_size == file_size
                 ):
+                    os.chmod(final, 0o644)
                     await self._notify(bot, f"直传任务 #{task.task_id} 已完成：\n{final.name}")
                     return final.name
 
