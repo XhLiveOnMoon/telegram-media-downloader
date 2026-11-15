@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.bot import BotService
+from app.bot import BotService, direct_media_size_error
 from app.config import Settings
 from app.storage import identity_token, prepare_directories
 
@@ -306,3 +306,21 @@ async def test_unauthorized_session_keeps_auth_required_tasks_paused(tmp_path: P
     assert resumed == 0
     assert stored.status == "auth_required"
 
+
+
+@pytest.mark.parametrize(
+    ("file_size", "expected"),
+    [
+        (None, "valid file size"),
+        (0, "valid file size"),
+        (-1, "valid file size"),
+        (20 * 1024 * 1024, None),
+        (20 * 1024 * 1024 + 1, "exceeds"),
+    ],
+)
+def test_direct_media_size_guard_fails_closed(file_size, expected):
+    result = direct_media_size_error(file_size)
+    if expected is None:
+        assert result is None
+    else:
+        assert expected in result

@@ -36,6 +36,24 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+_MAX_BOT_API_DOWNLOAD_BYTES = 20 * 1024 * 1024
+
+
+def direct_media_size_error(file_size: int | None) -> str | None:
+    """Fail closed when Bot API size metadata cannot prove the file is downloadable."""
+    if file_size is None or file_size <= 0:
+        return (
+            "Telegram did not provide a valid file size. Send the original message link "
+            "with /download instead."
+        )
+    if file_size > _MAX_BOT_API_DOWNLOAD_BYTES:
+        return (
+            "This file exceeds the standard Telegram Bot API download limit (20 MB). "
+            "Send the original message link with /download instead."
+        )
+    return None
+
+
 async def _delete_sensitive_message(message: Message) -> None:
     try:
         await message.delete()
@@ -632,11 +650,9 @@ async def direct_media(message: Message) -> None:
             "Telegram did not provide a stable file identity; this media cannot be queued safely."
         )
         return
-    if file_size and file_size > 20 * 1024 * 1024:
-        await message.answer(
-            "This file exceeds the standard Telegram Bot API download limit (20 MB). "
-            "Send the original message link with /download instead."
-        )
+    size_error = direct_media_size_error(file_size)
+    if size_error is not None:
+        await message.answer(size_error)
         return
 
     source_key = f"bot-{message.chat.id}-{message.message_id}"
