@@ -407,3 +407,30 @@ async def test_permanent_task_error_fails_without_retry(tmp_path):
     assert task.status == "failed"
     assert task.attempts == 1
     assert "missing required" in task.detail
+
+
+
+@pytest.mark.asyncio
+async def test_worker_does_not_log_unclassified_exception_message(tmp_path, caplog):
+    secret = "bot-token-must-not-appear-in-logs"
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/6543")
+
+    async def handler(task):
+        raise RuntimeError(secret)
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    for _ in range(100):
+        [task] = store.recent()
+        if task.status == "failed":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    assert secret not in caplog.text
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "failed"
+    assert task.detail == "Internal error: RuntimeError"

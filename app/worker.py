@@ -218,7 +218,13 @@ class DownloadWorker:
                     self.max_attempts,
                 )
         except Exception as exc:
-            logger.exception("Unclassified worker failure for task %s", task.task_id)
+            # Exception messages from HTTP clients may contain request URLs or
+            # credentials. Keep task logs limited to the exception class.
+            logger.error(
+                "Unclassified worker failure for task %s: %s",
+                task.task_id,
+                type(exc).__name__,
+            )
             self.store.fail(task.task_id, f"Internal error: {type(exc).__name__}")
         else:
             self.store.complete(task.task_id, detail or "Completed")
