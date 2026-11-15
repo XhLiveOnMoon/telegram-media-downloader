@@ -38,9 +38,9 @@ def make_message(size: int = 8192):
 async def test_private_link_resolves_uncached_channel_from_account_dialogs(tmp_path: Path):
     from types import SimpleNamespace
 
-    from app.links import MessageLink
-
     from telethon.tl.types import InputPeerChannel, InputPeerUser
+
+    from app.links import MessageLink
 
     channel = InputPeerChannel(channel_id=123456, access_hash=987654321)
 
