@@ -305,9 +305,14 @@ async def tasks(message: Message) -> None:
             source = record.source[:100]
         source = html_escape(str(source))
         detail = f" — {html_escape(record.detail[:100])}" if record.detail else ""
+        retry = (
+            f" retry-in={max(0, record.next_attempt_at - time.time()):.0f}s"
+            if record.next_attempt_at is not None
+            else ""
+        )
         lines.append(
-            f"#{record.task_id} [{record.status}] {record.task_type}: "
-            f"{source}{detail}"
+            f"#{record.task_id} [{record.status}] {record.task_type} "
+            f"attempts={record.attempts}{retry}: {source}{detail}"
         )
     await message.answer("\n".join(lines))
 
