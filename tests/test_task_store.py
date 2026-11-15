@@ -198,3 +198,22 @@ def test_active_task_can_be_cancelled_only_after_worker_claim(tmp_path: Path):
     assert store.cancel_active(task_id) is False
     [task] = store.recent()
     assert task.status == "cancelled"
+
+
+
+def test_download_progress_is_persisted_and_finalized(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/888")
+
+    assert store.update_progress(task_id, 1024, 4096, "asset.bin") is False
+    assert store.claim_next().task_id == task_id
+    assert store.update_progress(task_id, 2048, 4096, "asset.bin") is True
+    [task] = store.recent()
+    assert task.progress_bytes == 2048
+    assert task.total_bytes == 4096
+    assert task.current_file == "asset.bin"
+
+    store.complete(task_id, "asset.bin")
+    [task] = store.recent()
+    assert task.status == "completed"
+    assert task.progress_bytes == task.total_bytes == 4096
