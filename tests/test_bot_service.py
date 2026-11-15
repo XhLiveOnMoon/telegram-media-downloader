@@ -7,6 +7,7 @@ import pytest
 
 from app.bot import BotService
 from app.config import Settings
+from app.storage import prepare_directories
 
 
 class FakeBot:
@@ -38,6 +39,7 @@ def make_settings(tmp_path: Path) -> Settings:
 async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path):
     content = b"telegram test media" * 128
     settings = make_settings(tmp_path)
+    prepare_directories(settings.complete_dir, settings.incomplete_dir)
     service = BotService(settings, client=object())
     task_id = service.tasks.enqueue(
         "direct-media",
