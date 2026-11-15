@@ -358,7 +358,7 @@ async def test_transient_auth_failures_preserve_login_flow(
             self.cleared = False
 
         async def get_state(self):
-            return self.current
+            return None if self.current is None else f"AuthFlow:{self.current}"
 
         async def set_state(self, value):
             self.current = value
@@ -634,6 +634,7 @@ async def test_auth_start_reports_temporary_authorization_check_failure(
 
     class UnavailableService:
         settings = make_settings(tmp_path)
+        auth_flow_generation = 0
 
         def is_owner(self, message):
             return True
