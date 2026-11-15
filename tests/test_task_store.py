@@ -120,6 +120,7 @@ def test_interrupted_tasks_can_be_recovered_once(tmp_path: Path):
 def test_authorization_blocked_task_remains_recoverable(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
     task_id = store.enqueue("message-link", "https://t.me/example/100")
+    assert store.claim_next().task_id == task_id
     store.require_auth(task_id, "Telegram authorization required")
 
     [task] = store.recent()
@@ -139,6 +140,7 @@ def test_sqlite_uses_wal_journal_mode(tmp_path: Path):
 def test_failed_task_and_recent_limit(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
     old_id = store.enqueue("direct-media", "old.bin")
+    assert store.claim_next().task_id == old_id
     store.fail(old_id, "network error")
     new_id = store.enqueue("direct-media", "new.bin")
     records = store.recent(limit=1)
