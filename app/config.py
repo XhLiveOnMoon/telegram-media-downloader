@@ -20,6 +20,9 @@ class Settings:
     log_level: str = "INFO"
 
     def __post_init__(self) -> None:
+        data_dir = Path(os.path.abspath(self.data_dir))
+        if data_dir.resolve() != data_dir:
+            raise ValueError("DATA_DIR must not contain symlinks.")
         complete = self.complete_dir.resolve()
         incomplete = self.incomplete_dir.resolve()
         valid_layout = (

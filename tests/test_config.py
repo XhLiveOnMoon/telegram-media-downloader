@@ -71,3 +71,22 @@ def test_default_download_paths_are_telegram_scoped(monkeypatch):
 
     assert settings.complete_dir == Path("/downloads/complete/telegram")
     assert settings.incomplete_dir == Path("/downloads/incomplete/telegram")
+
+
+
+def test_data_directory_rejects_symlink_escape(tmp_path: Path):
+    real_data = tmp_path / "real-state"
+    real_data.mkdir()
+    data_link = tmp_path / "state-link"
+    data_link.symlink_to(real_data, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="DATA_DIR must not contain symlinks"):
+        Settings(
+            bot_token="test-token",
+            api_id=12345,
+            api_hash="test-hash",
+            owner_telegram_id=123456,
+            data_dir=data_link,
+            complete_dir=tmp_path / "downloads" / "complete" / "telegram",
+            incomplete_dir=tmp_path / "downloads" / "incomplete" / "telegram",
+        )
