@@ -307,7 +307,14 @@ async def auth_start(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    if await svc.is_authorized():
+    try:
+        authorized = await svc.is_authorized()
+    except FloodWaitError as exc:
+        await message.answer(
+            f"Telegram asks you to wait {exc.seconds} seconds before checking authorization."
+        )
+        return
+    if authorized:
         await message.answer("Telegram account is already authorized.")
         return
     await state.set_state(AuthFlow.phone)
@@ -320,7 +327,14 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
     if not callback.from_user or callback.from_user.id != svc.settings.owner_telegram_id:
         await callback.answer("Not authorized", show_alert=True)
         return
-    if await svc.is_authorized():
+    try:
+        authorized = await svc.is_authorized()
+    except FloodWaitError as exc:
+        await callback.answer(
+            f"Wait {exc.seconds} seconds before retrying authorization.", show_alert=True
+        )
+        return
+    if authorized:
         await callback.answer("Already authorized")
         await callback.bot.send_message(
             callback.from_user.id, "Telegram account is already authorized."
