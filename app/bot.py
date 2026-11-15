@@ -1,21 +1,34 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 
-from aiogram import Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import FloodWaitError, SessionPasswordNeededError
 
 from .config import Settings
-from .downloader import AuthorizationRequiredError, DownloadError, MediaDownloader
+from .downloader import (
+    AuthorizationRequiredError,
+    DownloadError,
+    MediaDownloader,
+    TransientDownloadError,
+)
 from .links import parse_message_link
 from .storage import prepare_directories, safe_filename, stable_partial_path
-from .task_store import DownloadTaskStore
+from .task_store import DownloadTask, DownloadTaskStore
+from .worker import (
+    AuthorizationRequired,
+    DownloadWorker,
+    FloodWait,
+    RetryableTaskError,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -38,20 +51,106 @@ class BotService:
     def __init__(self, settings: Settings, client: TelegramClient) -> None:
         self.settings = settings
         self.client = client
+        # The durable worker is the only caller of the downloader.
         self.downloader = MediaDownloader(
-            client,
-            settings.complete_dir,
-            settings.incomplete_dir,
-            settings.max_concurrent_downloads,
+            client, settings.complete_dir, settings.incomplete_dir, max_concurrent_downloads=1
         )
-        self.active_downloads = 0
         self.tasks = DownloadTaskStore(settings.data_dir / "downloads.sqlite3")
-        self.bot_semaphore = asyncio.Semaphore(settings.max_concurrent_downloads)
+        self.worker: DownloadWorker | None = None
+        self.worker_task: asyncio.Task | None = None
         self.pending_phone: str | None = None
         self.pending_code_hash: str | None = None
 
+    @property
+    def active_downloads(self) -> int:
+        return int(self.worker is not None and self.worker.active_task_id is not None)
+
     def is_owner(self, message: Message) -> bool:
         return bool(message.from_user and message.from_user.id == self.settings.owner_telegram_id)
+
+    def start_worker(self, bot: Bot) -> asyncio.Task:
+        if self.worker_task is not None:
+            raise RuntimeError("Download worker has already been started")
+        self.worker = DownloadWorker(self.tasks, lambda task: self.execute_task(task, bot))
+        self.worker_task = asyncio.create_task(self.worker.run(), name="download-worker")
+        return self.worker_task
+
+    async def execute_task(self, task: DownloadTask, bot: Bot) -> str:
+        try:
+            if task.task_type == "message-link":
+                if not await self.client.is_user_authorized():
+                    raise AuthorizationRequired("Telegram account is not authorized; run /auth")
+                link = parse_message_link(task.source)
+                paths = await self.downloader.download(link)
+                detail = ", ".join(path.name for path in paths)
+                await bot.send_message(
+                    self.settings.owner_telegram_id,
+                    f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\\n{detail}",
+                )
+                return detail
+
+            if task.task_type == "direct-media":
+                payload = json.loads(task.source)
+                file_id = payload["file_id"]
+                filename = safe_filename(payload["filename"])
+                file_size = payload.get("file_size")
+                source_key = payload["source_key"]
+                partial = stable_partial_path(
+                    self.settings.incomplete_dir, source_key, filename
+                )
+                final = self.settings.complete_dir / f"{source_key}-{filename}"
+                self.settings.complete_dir.mkdir(parents=True, exist_ok=True)
+
+                if final.exists() and (
+                    file_size is None or final.stat().st_size == file_size
+                ):
+                    return final.name
+
+                # Bot API downloads do not expose a byte-offset resume interface.
+                # Restart this small (<=20 MB) transfer from byte zero, never append.
+                partial.unlink(missing_ok=True)
+                await bot.download(file=file_id, destination=partial)
+                actual_size = partial.stat().st_size
+                if file_size is not None and actual_size != file_size:
+                    raise RetryableTaskError(
+                        f"Bot API file size mismatch ({actual_size}/{file_size} bytes)"
+                    )
+                with partial.open("rb") as stream:
+                    os.fsync(stream.fileno())
+                os.replace(partial, final)
+                self._sync_directory(final.parent)
+                await bot.send_message(
+                    self.settings.owner_telegram_id,
+                    f"直传任务 #{task.task_id} 完成：\\n{final.name}",
+                )
+                return final.name
+
+            raise ValueError(f"Unsupported task type: {task.task_type}")
+        except FloodWaitError as exc:
+            raise FloodWait(exc.seconds) from exc
+        except AuthorizationRequiredError as exc:
+            raise AuthorizationRequired(str(exc)) from exc
+        except TransientDownloadError as exc:
+            raise RetryableTaskError(str(exc)) from exc
+        except Exception as exc:
+            retry_after = getattr(exc, "retry_after", None)
+            if retry_after is not None:
+                seconds = getattr(retry_after, "total_seconds", None)
+                delay = seconds() if callable(seconds) else float(retry_after)
+                raise FloodWait(int(delay)) from exc
+            await bot.send_message(
+                self.settings.owner_telegram_id,
+                f"下载任务 #{task.task_id} 失败：{type(exc).__name__}。可通过 /tasks 查看状态。",
+            )
+            raise
+
+    @staticmethod
+    def _sync_directory(directory) -> None:
+        descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 service: BotService | None = None
@@ -69,11 +168,11 @@ async def start(message: Message) -> None:
     if not svc.is_owner(message):
         return
     await message.answer(
-        "Telegram Media Downloader is ready.\n\n"
-        "/auth — authorize your Telegram account\n"
-        "/download <message link> — download media\n"
-        "/status — show service status\n"
-        "/tasks — show recent download tasks\n"
+        "Telegram Media Downloader is ready.\\n\\n"
+        "/auth — authorize your Telegram account\\n"
+        "/download <message link> — queue a download\\n"
+        "/status — show service status\\n"
+        "/tasks — show recent download tasks\\n"
         "/cancel — cancel the current interaction"
     )
 
@@ -83,13 +182,17 @@ async def status(message: Message) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    authorized = await svc.client.is_user_authorized()
-    state = "authorized" if authorized else "authorization required"
+    try:
+        authorized = await svc.client.is_user_authorized()
+        state = "authorized" if authorized else "authorization required"
+    except Exception as exc:
+        state = f"temporarily unavailable ({type(exc).__name__})"
+    cooldown = svc.tasks.cooldown_remaining()
     await message.answer(
-        f"Bot: running\nTelegram account: {state}\n"
-        f"Active downloads: {svc.active_downloads}"
+        f"Bot: running\\nTelegram account: {state}\\n"
+        f"Active downloads: {svc.active_downloads}\\n"
+        f"Global Telegram cooldown: {cooldown:.0f}s"
     )
-
 
 
 @router.message(F.chat.type == "private", Command("tasks"))
@@ -109,7 +212,7 @@ async def tasks(message: Message) -> None:
             f"#{record.task_id} [{record.status}] {record.task_type}: "
             f"{source}{detail}"
         )
-    await message.answer("\n".join(lines))
+    await message.answer("\\n".join(lines))
 
 
 @router.message(F.chat.type == "private", Command("auth"))
@@ -144,6 +247,15 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+async def _authorization_succeeded(message: Message, state: FSMContext, svc: BotService) -> None:
+    svc.pending_phone = svc.pending_code_hash = None
+    await state.clear()
+    resumed = svc.tasks.resume_auth_required()
+    await message.answer(
+        f"Authorization successful. {resumed} authorization-blocked task(s) returned to the queue."
+    )
+
+
 @router.message(AuthFlow.phone, F.chat.type == "private", F.text, ~F.text.startswith("/"))
 async def auth_phone(message: Message, state: FSMContext) -> None:
     svc = get_service()
@@ -158,9 +270,7 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         sent = await svc.client.send_code_request(phone)
     except Exception as exc:
         logger.warning("Telegram code request failed: %s", type(exc).__name__)
-        await message.answer(
-            "Could not request a login code. Check the number and try /auth again."
-        )
+        await message.answer("Could not request a login code. Check the number and try /auth again.")
         await state.clear()
         return
     svc.pending_phone = phone
@@ -196,10 +306,7 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         svc.pending_phone = svc.pending_code_hash = None
         await state.clear()
         return
-    svc.pending_phone = svc.pending_code_hash = None
-    await state.clear()
-    await message.answer("Authorization successful. Checking interrupted downloads now.")
-    await recover_interrupted_tasks(message.bot)
+    await _authorization_succeeded(message, state, svc)
 
 
 @router.message(AuthFlow.password, F.chat.type == "private", F.text, ~F.text.startswith("/"))
@@ -217,10 +324,7 @@ async def auth_password(message: Message, state: FSMContext) -> None:
         svc.pending_phone = svc.pending_code_hash = None
         await state.clear()
         return
-    svc.pending_phone = svc.pending_code_hash = None
-    await state.clear()
-    await message.answer("Authorization successful. Checking interrupted downloads now.")
-    await recover_interrupted_tasks(message.bot)
+    await _authorization_succeeded(message, state, svc)
 
 
 @router.message(F.chat.type == "private", Command("cancel"))
@@ -238,43 +342,20 @@ async def download(message: Message, command: CommandObject) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    if not await svc.client.is_user_authorized():
-        await message.answer("Telegram account is not authorized. Run /auth first.")
-        return
     if not command.args:
         await message.answer("Usage: /download https://t.me/channel/123")
         return
     try:
-        link = parse_message_link(command.args)
+        parse_message_link(command.args)
     except ValueError as exc:
         await message.answer(str(exc))
         return
-    task_id = svc.tasks.create("message-link", command.args)
-    progress = await message.answer(f"Download started (task #{task_id})…")
-    svc.active_downloads += 1
-    try:
-        paths = await svc.downloader.download(link)
-        names = "\n".join(f"• {path.name}" for path in paths)
-        svc.tasks.complete(task_id, ", ".join(path.name for path in paths))
-        await progress.edit_text(
-            f"Download completed ({len(paths)} file(s), task #{task_id}):\n{names}"
-        )
-    except AuthorizationRequiredError as exc:
-        svc.tasks.interrupt(task_id, str(exc))
-        await progress.edit_text(
-            f"任务 #{task_id} 已暂停，Telegram 账号需要重新授权。完成 /auth 后会自动续传。"
-        )
-    except DownloadError as exc:
-        svc.tasks.fail(task_id, str(exc))
-        await progress.edit_text(f"Download failed (task #{task_id}): {exc}")
-    except Exception as exc:
-        logger.exception("Unexpected download task failure: %s", task_id)
-        svc.tasks.fail(task_id, type(exc).__name__)
-        await progress.edit_text(
-            f"Download failed (task #{task_id}): unexpected internal error."
-        )
-    finally:
-        svc.active_downloads -= 1
+    task_id = svc.tasks.enqueue("message-link", command.args)
+    if not await svc.client.is_user_authorized():
+        svc.tasks.require_auth(task_id, "Telegram account authorization is required")
+        await message.answer(f"任务 #{task_id} 已保存，但需要先 /auth 授权；授权后会自动排队。")
+        return
+    await message.answer(f"任务 #{task_id} 已加入下载队列，当前采用全局单任务串行下载。")
 
 
 @router.message(
@@ -282,7 +363,7 @@ async def download(message: Message, command: CommandObject) -> None:
     F.document | F.video | F.audio | F.voice | F.photo,
 )
 async def direct_media(message: Message) -> None:
-    """Download media sent or forwarded directly to the Bot (Bot API size limit applies)."""
+    """Queue directly sent/forwarded media; all sources share the same worker."""
     svc = get_service()
     if not svc.is_owner(message):
         return
@@ -306,33 +387,19 @@ async def direct_media(message: Message) -> None:
         return
 
     source_key = f"bot-{message.chat.id}-{message.message_id}"
-    safe_name = safe_filename(filename)
-    partial = stable_partial_path(svc.settings.incomplete_dir, source_key, safe_name)
-    final = svc.settings.complete_dir / f"{source_key}-{safe_name}"
-    task_id = svc.tasks.create("direct-media", filename)
-    progress = await message.answer(f"Direct media download started (task #{task_id})…")
-    async with svc.bot_semaphore:
-        svc.active_downloads += 1
-        try:
-            if not (final.exists() and (not file_size or final.stat().st_size == file_size)):
-                await message.bot.download(file=file_id, destination=partial)
-                if file_size and partial.stat().st_size != file_size:
-                    raise DownloadError(
-                        "Downloaded file size mismatch "
-                        f"({partial.stat().st_size}/{file_size} bytes)."
-                    )
-                final.parent.mkdir(parents=True, exist_ok=True)
-                partial.replace(final)
-            svc.tasks.complete(task_id, final.name)
-            await progress.edit_text(f"Download completed (task #{task_id}):\n{final.name}")
-        except Exception as exc:
-            logger.exception("Direct Bot media download failed")
-            svc.tasks.fail(task_id, type(exc).__name__)
-            await progress.edit_text(
-                f"Direct media download failed (task #{task_id}): {type(exc).__name__}."
-            )
-        finally:
-            svc.active_downloads -= 1
+    payload = json.dumps(
+        {
+            "file_id": file_id,
+            "filename": filename,
+            "file_size": file_size,
+            "source_key": source_key,
+        },
+        ensure_ascii=False,
+    )
+    task_id = svc.tasks.enqueue("direct-media", payload)
+    await message.answer(
+        f"直传文件任务 #{task_id} 已加入全局下载队列；当前任务完成后会自动处理。"
+    )
 
 
 def build_dispatcher(settings: Settings, client: TelegramClient) -> Dispatcher:
@@ -344,76 +411,3 @@ def build_dispatcher(settings: Settings, client: TelegramClient) -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(router)
     return dispatcher
-
-
-async def recover_interrupted_tasks(bot) -> None:
-    """Replay durable message-link tasks after a process/container restart."""
-    svc = get_service()
-    interrupted = svc.tasks.interrupted()
-    if not interrupted:
-        return
-
-    try:
-        authorized = await svc.client.is_user_authorized()
-    except Exception as exc:
-        logger.warning("Cannot check Telegram authorization during recovery: %s", type(exc).__name__)
-        return
-    if not authorized:
-        await bot.send_message(
-            svc.settings.owner_telegram_id,
-            f"发现 {len(interrupted)} 个中断下载任务。Telegram 用户账号尚未授权，"
-            "任务和临时文件均已保留；完成 /auth 后会自动恢复。",
-        )
-        return
-
-    await bot.send_message(
-        svc.settings.owner_telegram_id,
-        f"服务重启恢复：发现 {len(interrupted)} 个中断任务，开始检查并恢复。",
-    )
-    for task in interrupted:
-        if task.task_type != "message-link":
-            svc.tasks.fail(
-                task.task_id,
-                "Automatic recovery is unavailable for direct Bot API media; resend the file.",
-            )
-            continue
-        try:
-            link = parse_message_link(task.source)
-        except ValueError:
-            svc.tasks.fail(task.task_id, "Stored source link is invalid; submit it again.")
-            continue
-
-        if not svc.tasks.mark_running(task.task_id):
-            continue
-        svc.active_downloads += 1
-        try:
-            paths = await svc.downloader.download(link)
-            svc.tasks.complete(task.task_id, ", ".join(path.name for path in paths))
-            await bot.send_message(
-                svc.settings.owner_telegram_id,
-                f"任务 #{task.task_id} 已在重启后恢复完成："
-                + ", ".join(path.name for path in paths),
-            )
-        except AuthorizationRequiredError as exc:
-            svc.tasks.interrupt(task.task_id, str(exc))
-            await bot.send_message(
-                svc.settings.owner_telegram_id,
-                f"任务 #{task.task_id} 因账号授权失效已暂停，临时文件已保留。"
-                "完成 /auth 后会自动续传。",
-            )
-            break
-        except DownloadError as exc:
-            svc.tasks.fail(task.task_id, str(exc))
-            await bot.send_message(
-                svc.settings.owner_telegram_id,
-                f"任务 #{task.task_id} 自动恢复失败，临时文件已保留：{exc}",
-            )
-        except Exception as exc:
-            logger.exception("Restart recovery failed for task %s", task.task_id)
-            svc.tasks.fail(task.task_id, type(exc).__name__)
-            await bot.send_message(
-                svc.settings.owner_telegram_id,
-                f"任务 #{task.task_id} 自动恢复遇到内部错误（{type(exc).__name__}）。",
-            )
-        finally:
-            svc.active_downloads -= 1
