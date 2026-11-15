@@ -119,9 +119,14 @@ class BotService:
         try:
             if task.task_type == "message-link":
                 link = parse_message_link(task.source)
+                def progress(downloaded: int, total: int | None, filename: str) -> None:
+                    self.tasks.update_progress(task.task_id, downloaded, total, filename)
+
                 async with self.mtproto_lock:
                     await self.wait_for_mtproto_cooldown()
-                    paths = await self.downloader.download(link)
+                    paths = await self.downloader.download(
+                        link, progress_callback=progress
+                    )
                 detail = ", ".join(path.name for path in paths)
                 await self._notify(
                     bot, f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\n{detail}"
@@ -143,6 +148,9 @@ class BotService:
                 if final.exists() and (
                     file_size is None or final.stat().st_size == file_size
                 ):
+                    self.tasks.update_progress(
+                        task.task_id, final.stat().st_size, file_size, filename
+                    )
                     os.chmod(final, 0o644)
                     with final.open("rb+") as stream:
                         os.fsync(stream.fileno())
@@ -151,13 +159,16 @@ class BotService:
 
                 # Bot API downloads do not expose a byte-offset resume interface.
                 # Restart this small (<=20 MB) transfer from byte zero, never append.
+                self.tasks.update_progress(task.task_id, 0, file_size, filename)
                 partial.unlink(missing_ok=True)
                 await bot.download(file=file_id, destination=partial)
                 actual_size = partial.stat().st_size
                 if file_size is not None and actual_size != file_size:
+                    self.tasks.update_progress(task.task_id, actual_size, file_size, filename)
                     raise RetryableTaskError(
                         f"Bot API file size mismatch ({actual_size}/{file_size} bytes)"
                     )
+                self.tasks.update_progress(task.task_id, actual_size, file_size, filename)
                 os.chmod(partial, 0o644)
                 with partial.open("rb+") as stream:
                     os.fsync(stream.fileno())
