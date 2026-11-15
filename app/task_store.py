@@ -329,8 +329,10 @@ class DownloadTaskStore:
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE download_tasks SET status=?, detail=?, next_attempt_at=NULL, "
-                "updated_at=? WHERE id=? AND status='downloading'",
-                (status, detail[:1000], self._now(), task_id),
+                "updated_at=?, progress_bytes=CASE WHEN ?='completed' "
+                "AND total_bytes IS NOT NULL THEN total_bytes ELSE progress_bytes END "
+                "WHERE id=? AND status='downloading'",
+                (status, detail[:1000], self._now(), status, task_id),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError(f"Task {task_id} is not in downloading state")
