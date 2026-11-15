@@ -174,3 +174,29 @@ def test_queued_task_can_be_cancelled_without_claiming(tmp_path: Path):
     assert store.cancel(task_id) is False
     [task] = store.recent()
     assert task.status == "cancelled"
+
+
+
+def test_failed_task_can_be_requeued_once(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/444")
+    assert store.claim_next().task_id == task_id
+    store.fail(task_id, "network failure")
+
+    assert store.requeue(task_id) is True
+    assert store.requeue(task_id) is False
+    [task] = store.recent()
+    assert task.status == "queued"
+    assert task.attempts == 0
+
+
+def test_active_task_can_be_cancelled_only_after_worker_claim(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/555")
+
+    assert store.cancel_active(task_id) is False
+    assert store.claim_next().task_id == task_id
+    assert store.cancel_active(task_id) is True
+    assert store.cancel_active(task_id) is False
+    [task] = store.recent()
+    assert task.status == "cancelled"
