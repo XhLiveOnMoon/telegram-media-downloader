@@ -457,3 +457,25 @@ async def test_storage_unavailable_defers_task_without_consuming_attempts(tmp_pa
     assert task.status == "retry_wait"
     assert task.attempts == 0
     assert task.next_attempt_at is not None
+
+
+
+@pytest.mark.asyncio
+async def test_worker_does_not_log_retryable_exception_message(tmp_path, caplog):
+    secret = "opaque-request-token-must-not-be-logged"
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/6545")
+
+    async def handler(task):
+        raise RetryableTaskError(secret)
+
+    worker = DownloadWorker(
+        store, handler, poll_interval=0.01, max_attempts=2, retry_base_delay=0.1
+    )
+    await worker._run_once()
+
+    assert secret not in caplog.text
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "retry_wait"
+    assert secret in task.detail
