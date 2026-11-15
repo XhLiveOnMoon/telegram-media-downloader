@@ -30,9 +30,11 @@ class Settings:
         api_id = int(os.environ["API_ID"])
         owner_id = int(os.environ["OWNER_TELEGRAM_ID"])
         concurrency = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "1"))
-        if api_id <= 0 or owner_id <= 0 or concurrency < 1:
+        if api_id <= 0 or owner_id <= 0:
+            raise ValueError("API_ID and OWNER_TELEGRAM_ID must be positive")
+        if concurrency != 1:
             raise ValueError(
-                "API_ID, OWNER_TELEGRAM_ID and MAX_CONCURRENT_DOWNLOADS must be positive"
+                "MAX_CONCURRENT_DOWNLOADS must be 1; all download sources share one worker"
             )
 
         return cls(
