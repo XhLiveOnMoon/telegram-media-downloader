@@ -1,4 +1,5 @@
 from pathlib import Path
+import stat
 from types import SimpleNamespace
 
 import pytest
@@ -43,6 +44,7 @@ async def test_download_resumes_from_aligned_partial_file(tmp_path: Path):
 
     assert client.requested_offset == 4096
     assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
+    assert stat.S_IMODE(result.stat().st_mode) == 0o644
     assert not partial.exists()
 
 
