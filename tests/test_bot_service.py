@@ -627,6 +627,39 @@ async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
+async def test_authorization_callback_rejects_non_private_chat(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.bot import auth_callback
+
+    class Service:
+        settings = SimpleNamespace(owner_telegram_id=123456)
+
+    class FakeCallback:
+        from_user = SimpleNamespace(id=123456)
+        message = SimpleNamespace(chat=SimpleNamespace(type="group"))
+
+        def __init__(self):
+            self.answers = []
+
+        async def answer(self, text, show_alert=False):
+            self.answers.append((text, show_alert))
+
+    class FakeState:
+        pass
+
+    monkeypatch.setattr("app.bot.get_service", lambda: Service())
+    callback = FakeCallback()
+
+    await auth_callback(callback, FakeState())
+
+    assert callback.answers == [
+        ("Please authorize through a private chat with the Bot.", True)
+    ]
+
+
+
+@pytest.mark.asyncio
 async def test_auth_start_reports_temporary_authorization_check_failure(
     tmp_path: Path, monkeypatch
 ):
