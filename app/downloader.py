@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
 from pathlib import Path
@@ -209,6 +210,14 @@ class MediaDownloader:
             except DownloadError:
                 raise
             except Exception as exc:
+                if isinstance(exc, OSError) and exc.errno in {
+                    errno.EACCES, errno.EPERM, errno.ENOSPC, errno.EDQUOT,
+                    errno.EIO, errno.EROFS, errno.ENOENT, errno.ENOTDIR,
+                }:
+                    raise DownloadError(
+                        f"Local storage I/O failed ({exc.strerror or type(exc).__name__}). "
+                        "Check the download disk and directory permissions."
+                    ) from exc
                 if type(exc).__name__ in _AUTH_ERROR_NAMES:
                     raise AuthorizationRequiredError(
                         "Telegram account authorization expired during download. "
