@@ -88,9 +88,6 @@ async def test_private_link_rejects_channel_not_found_in_account_dialogs(tmp_pat
         )
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_photo_download_uses_photo_size_for_integrity_check(tmp_path: Path):
     class PhotoSize:

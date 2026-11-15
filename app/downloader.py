@@ -112,6 +112,7 @@ def _expected_media_size(message) -> int | None:
         )
     return size
 
+
 _AUTH_ERROR_NAMES = {
     "AuthKeyUnregisteredError",
     "AuthKeyInvalidError",
