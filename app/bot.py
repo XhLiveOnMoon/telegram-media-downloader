@@ -691,7 +691,8 @@ async def auth_password(message: Message, state: FSMContext) -> None:
     generation = await _current_auth_generation(svc, state, AuthFlow.password)
     if generation is None:
         return
-    password = (message.text or "").strip()
+    # Telegram 2FA passwords are opaque strings; surrounding spaces are significant.
+    password = message.text or ""
     await _delete_sensitive_message(message)
     if generation != svc.auth_flow_generation:
         return

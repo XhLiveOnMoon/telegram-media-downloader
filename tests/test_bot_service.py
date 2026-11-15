@@ -580,6 +580,56 @@ async def test_direct_media_sqlite_failure_is_deferred_before_download(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_auth_password_preserves_leading_and_trailing_spaces(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.bot as bot_module
+    from app.bot import AuthFlow, BotService
+
+    class PasswordClient:
+        def __init__(self):
+            self.received_password = None
+
+        async def sign_in(self, **kwargs):
+            self.received_password = kwargs["password"]
+
+    class FakeState:
+        current = AuthFlow.password.state
+
+        async def get_state(self):
+            return self.current
+
+        async def clear(self):
+            self.current = None
+
+    class FakeMessage:
+        chat = SimpleNamespace(type="private")
+        from_user = SimpleNamespace(id=123456)
+
+        def __init__(self, text):
+            self.text = text
+            self.answers = []
+
+        async def delete(self):
+            return None
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    client = PasswordClient()
+    service = BotService(make_settings(tmp_path), client)
+    monkeypatch.setattr(bot_module, "get_service", lambda: service)
+    message = FakeMessage("  secret with spaces  ")
+    state = FakeState()
+
+    await bot_module.auth_password(message, state)
+
+    assert client.received_password == "  secret with spaces  "
+    assert state.current is None
+    assert any("Authorization successful" in answer for answer in message.answers)
+
+
+@pytest.mark.asyncio
 async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, monkeypatch):
     import asyncio
     from types import SimpleNamespace
