@@ -96,7 +96,7 @@ Only the configured owner ID is allowed to use the Bot. The user account must al
     └── telegram/
 ```
 
-The service sees the shared downloads root through one HDD mount so a completed file can be atomically renamed from incomplete to complete. It runs as UID 1001, separate from qBittorrent's UID 1000, and only writes under `complete/telegram` and `incomplete/telegram`. The SQLite database and Telethon session live under the project data directory (SSD); partial and completed media files live on the HDD.
+The service sees the shared downloads root through one HDD mount so a completed file can be atomically renamed from incomplete to complete. It runs as UID 1001, separate from qBittorrent's UID 1000, and only writes under `complete/telegram` and `incomplete/telegram`. The SQLite database and Telethon session live under the project data directory (SSD); partial and completed media files live on the HDD. At startup, `DATA_DIR` is rejected if it contains symlinks or shares an ancestor/descendant path with the downloads mount.
 
 ## Security
 
