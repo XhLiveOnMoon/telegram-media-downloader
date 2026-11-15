@@ -149,7 +149,11 @@ class BotService:
             raise FloodWait(exc.seconds) from exc
         except AuthorizationRequiredError as exc:
             await self._notify(
-                bot, f"任务 #{task.task_id} 已暂停：Telegram 用户账号需要重新授权，请私聊发送 /auth。"
+                bot,
+                (
+                    f"任务 #{task.task_id} 已暂停：Telegram 用户账号需要重新授权，"
+                    "请私聊发送 /auth。"
+                ),
             )
             raise AuthorizationRequired(str(exc)) from exc
         except TransientDownloadError as exc:
