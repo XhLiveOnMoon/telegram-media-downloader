@@ -77,8 +77,6 @@ class BotService:
     async def execute_task(self, task: DownloadTask, bot: Bot) -> str:
         try:
             if task.task_type == "message-link":
-                if not await self.client.is_user_authorized():
-                    raise AuthorizationRequired("Telegram account is not authorized; run /auth")
                 link = parse_message_link(task.source)
                 paths = await self.downloader.download(link)
                 detail = ", ".join(path.name for path in paths)
@@ -103,6 +101,7 @@ class BotService:
                 if final.exists() and (
                     file_size is None or final.stat().st_size == file_size
                 ):
+                    await self._notify(bot, f"直传任务 #{task.task_id} 已完成：\\n{final.name}")
                     return final.name
 
                 # Bot API downloads do not expose a byte-offset resume interface.
@@ -137,11 +136,25 @@ class BotService:
                 seconds = getattr(retry_after, "total_seconds", None)
                 delay = seconds() if callable(seconds) else float(retry_after)
                 raise FloodWait(int(delay)) from exc
-            await bot.send_message(
-                self.settings.owner_telegram_id,
+            if type(exc).__name__ in {
+                "TelegramNetworkError", "TelegramServerError", "ServerError",
+                "TimedOutError", "RpcCallFailError", "ConnectionError", "TimeoutError",
+            }:
+                raise RetryableTaskError(
+                    f"Telegram transport error: {type(exc).__name__}"
+                ) from exc
+            await self._notify(
+                bot,
                 f"下载任务 #{task.task_id} 失败：{type(exc).__name__}。可通过 /tasks 查看状态。",
             )
             raise
+
+    async def _notify(self, bot: Bot, text: str) -> None:
+        try:
+            await bot.send_message(self.settings.owner_telegram_id, text)
+        except Exception as exc:
+            # Notification failure must not turn an already-saved file into a failed task.
+            logger.warning("Could not send task notification: %s", type(exc).__name__)
 
     @staticmethod
     def _sync_directory(directory) -> None:
@@ -267,6 +280,11 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         return
     try:
         sent = await svc.client.send_code_request(phone)
+    except FloodWaitError as exc:
+        await message.answer(
+            f"Telegram asks you to wait {exc.seconds} seconds before requesting another login code."
+        )
+        return
     except Exception as exc:
         logger.warning("Telegram code request failed: %s", type(exc).__name__)
         await message.answer("Could not request a login code. Check the number and try /auth again.")
@@ -299,6 +317,11 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         await state.set_state(AuthFlow.password)
         await message.answer("Two-step verification is enabled. Send your 2FA password.")
         return
+    except FloodWaitError as exc:
+        await message.answer(
+            f"Telegram asks you to wait {exc.seconds} seconds before retrying this login step."
+        )
+        return
     except Exception as exc:
         logger.warning("Telegram code verification failed: %s", type(exc).__name__)
         await message.answer("Code was rejected or expired. Run /auth to request a new code.")
@@ -317,6 +340,11 @@ async def auth_password(message: Message, state: FSMContext) -> None:
     await _delete_sensitive_message(message)
     try:
         await svc.client.sign_in(password=password)
+    except FloodWaitError as exc:
+        await message.answer(
+            f"Telegram asks you to wait {exc.seconds} seconds before retrying 2FA."
+        )
+        return
     except Exception as exc:
         logger.warning("Telegram 2FA verification failed: %s", type(exc).__name__)
         await message.answer("2FA verification failed. Run /auth to start again.")
