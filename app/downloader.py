@@ -50,6 +50,7 @@ class MediaDownloader:
         self.max_network_retries = max(0, max_network_retries)
         self.retry_base_delay = max(0.1, retry_base_delay)
         self._semaphore = asyncio.Semaphore(max_concurrent_downloads)
+        self._file_locks: dict[str, asyncio.Lock] = {}
 
     async def download(self, link: MessageLink) -> list[Path]:
         async with self._semaphore:
@@ -102,6 +103,12 @@ class MediaDownloader:
             os.close(descriptor)
 
     async def _download_one(self, message, entity=None) -> Path:
+        source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
+        lock = self._file_locks.setdefault(source_key, asyncio.Lock())
+        async with lock:
+            return await self._download_one_locked(message, entity, source_key)
+
+    async def _download_one_locked(self, message, entity, source_key: str) -> Path:
         document = getattr(message, "document", None)
         original_name = None
         if document:
@@ -111,7 +118,6 @@ class MediaDownloader:
             extension = ".jpg" if getattr(message, "photo", None) else ".bin"
             original_name = f"telegram-{message.id}{extension}"
         filename = safe_filename(original_name, f"telegram-{message.id}")
-        source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
         partial = stable_partial_path(self.incomplete_dir, source_key, filename)
         final = self.complete_dir / f"{source_key}-{filename}"
         self.complete_dir.mkdir(parents=True, exist_ok=True)
