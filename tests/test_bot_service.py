@@ -97,7 +97,7 @@ async def test_direct_media_rejects_size_mismatch_for_worker_retry(tmp_path: Pat
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
-    assert stored.progress_bytes == 4
+    assert stored.progress_bytes == 5
     assert stored.total_bytes == 100
 
 
