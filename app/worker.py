@@ -51,6 +51,14 @@ class DownloadWorker:
         self.active_task_id: int | None = None
         self.local_cooldown_until = 0.0
 
+    def cancel_task(self, task_id: int) -> bool:
+        """Cancel a queued task or request cancellation of the active download."""
+        if self.active_task_id == task_id and self.operation_task is not None:
+            self.cancel_requested = True
+            self.operation_task.cancel()
+            return True
+        return self.store.cancel(task_id)
+
     async def run(self) -> None:
         """Run until cancelled; recover from transient scheduler/database errors."""
         while True:
@@ -68,6 +76,7 @@ class DownloadWorker:
                     except Exception:
                         logger.exception("Could not persist interrupted state for task %s", task_id)
                 self.active_task_id = None
+                self.operation_task = None
                 logger.exception("Download scheduler loop failed; retrying in 5 seconds")
                 await asyncio.sleep(5)
 
@@ -87,9 +96,18 @@ class DownloadWorker:
             return
 
         self.active_task_id = task.task_id
+        self.cancel_requested = False
+        self.operation_task = asyncio.create_task(
+            self.handler(task), name=f"download-task-{task.task_id}"
+        )
         try:
-            detail = await self.handler(task)
+            detail = await self.operation_task
         except asyncio.CancelledError:
+            if self.cancel_requested:
+                self.store.cancel_active(task.task_id)
+                self.cancel_requested = False
+                self.active_task_id = None
+                return
             try:
                 self.store.interrupt(
                     task.task_id, "Worker stopped; task will resume on restart"
@@ -143,4 +161,5 @@ class DownloadWorker:
             self.store.fail(task.task_id, f"Internal error: {type(exc).__name__}")
         else:
             self.store.complete(task.task_id, detail or "Completed")
+        self.operation_task = None
         self.active_task_id = None
