@@ -4,6 +4,7 @@ import hashlib
 import re
 from pathlib import Path
 
+
 def identity_token(value: str) -> str:
     """Return a stable, path-safe token for an external media identity."""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
