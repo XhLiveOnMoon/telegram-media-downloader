@@ -148,6 +148,7 @@ class MediaDownloader:
         self.complete_dir.mkdir(parents=True, exist_ok=True)
         size = getattr(document, "size", None) if document else None
         if final.exists() and (not size or final.stat().st_size == size):
+            os.chmod(final, 0o644)
             return final
 
         network_attempt = 0
