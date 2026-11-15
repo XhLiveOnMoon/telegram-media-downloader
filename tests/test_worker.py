@@ -342,3 +342,38 @@ async def test_worker_retries_orphan_recovery_after_recovery_write_failure(tmp_p
     assert task.status == "completed"
     assert task.detail == "recovered.bin"
     assert task.attempts == 1
+
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_wins_over_racing_user_cancel(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/9878")
+    started = asyncio.Event()
+
+    async def handler(task):
+        started.set()
+        await asyncio.Future()
+
+    def unavailable_cancel_active(current_task_id, detail="Cancelled by owner"):
+        raise OSError("simulated temporary SQLite write failure")
+
+    store.cancel_active = unavailable_cancel_active
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    # Race an owner cancellation with process shutdown. The parent worker's
+    # cancellation must take precedence over the child operation's cancellation.
+    assert worker.cancel_task(task_id) is True
+    run.cancel()
+    try:
+        await asyncio.wait_for(asyncio.gather(run, return_exceptions=True), timeout=2)
+    finally:
+        if not run.done():
+            run.cancel()
+            await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert task.status == "interrupted"
+    assert task.attempts == 0

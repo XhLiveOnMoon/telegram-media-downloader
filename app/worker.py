@@ -152,7 +152,11 @@ class DownloadWorker:
         try:
             detail = await self.operation_task
         except asyncio.CancelledError:
-            if self.cancel_requested:
+            current_worker = asyncio.current_task()
+            shutting_down = (
+                current_worker is not None and current_worker.cancelling() > 0
+            )
+            if self.cancel_requested and not shutting_down:
                 self.store.cancel_active(task.task_id)
                 self.cancel_requested = False
                 self.operation_task = None
