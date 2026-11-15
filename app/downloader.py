@@ -80,6 +80,7 @@ class MediaDownloader:
         source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
         partial = stable_partial_path(self.incomplete_dir, source_key, filename)
         final = self.complete_dir / f"{source_key}-{filename}"
+        self.complete_dir.mkdir(parents=True, exist_ok=True)
         try:
             size = getattr(document, "size", None) if document else None
             if final.exists() and (not size or final.stat().st_size == size):
