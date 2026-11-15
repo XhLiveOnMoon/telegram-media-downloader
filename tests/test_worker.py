@@ -377,3 +377,33 @@ async def test_worker_shutdown_wins_over_racing_user_cancel(tmp_path):
     [task] = store.recent()
     assert task.status == "interrupted"
     assert task.attempts == 0
+
+
+
+@pytest.mark.asyncio
+async def test_permanent_task_error_fails_without_retry(tmp_path):
+    from app.worker import PermanentTaskError
+
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("direct-media", '{"file_id":"legacy"}')
+
+    async def handler(task):
+        raise PermanentTaskError("missing required Bot API file size")
+
+    worker = DownloadWorker(
+        store, handler, poll_interval=0.01, max_attempts=5, retry_base_delay=0.01
+    )
+    run = asyncio.create_task(worker.run())
+    for _ in range(100):
+        [task] = store.recent()
+        if task.status == "failed":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "failed"
+    assert task.attempts == 1
+    assert "missing required" in task.detail

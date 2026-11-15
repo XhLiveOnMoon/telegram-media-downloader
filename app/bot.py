@@ -29,6 +29,7 @@ from .worker import (
     AuthorizationRequired,
     DownloadWorker,
     FloodWait,
+    PermanentTaskError,
     RetryableTaskError,
 )
 
@@ -41,7 +42,7 @@ _MAX_BOT_API_DOWNLOAD_BYTES = 20 * 1024 * 1024
 
 def direct_media_size_error(file_size: int | None) -> str | None:
     """Fail closed when Bot API size metadata cannot prove the file is downloadable."""
-    if file_size is None or file_size <= 0:
+    if isinstance(file_size, bool) or not isinstance(file_size, int) or file_size <= 0:
         return (
             "Telegram did not provide a valid file size. Send the original message link "
             "with /download instead."
@@ -164,6 +165,11 @@ class BotService:
                 file_id = payload["file_id"]
                 filename = safe_filename(payload["filename"])
                 file_size = payload.get("file_size")
+                size_error = direct_media_size_error(file_size)
+                if size_error is not None:
+                    raise PermanentTaskError(
+                        f"Direct Bot API task cannot be resumed safely: {size_error}"
+                    )
                 source_key = payload["source_key"]
                 # Legacy queued tasks lack file_unique_id; file_id is a conservative
                 # fallback so they cannot collide with newly submitted media.
@@ -245,6 +251,9 @@ class BotService:
                     bot, f"任务 #{task.task_id} 多次网络重试仍失败，已停止自动重试：{exc}"
                 )
             raise RetryableTaskError(str(exc)) from exc
+        except PermanentTaskError as exc:
+            await self._notify(bot, f"下载任务 #{task.task_id} 无法执行：{exc}")
+            raise
         except RetryableTaskError as exc:
             if self.worker and task.attempts >= self.worker.max_attempts:
                 await self._notify(

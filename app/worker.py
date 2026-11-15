@@ -18,6 +18,10 @@ class AuthorizationRequired(RuntimeError):
     """The Telegram user session must be authorized before work can continue."""
 
 
+class PermanentTaskError(RuntimeError):
+    """A task has invalid or unsupported data and must not be retried."""
+
+
 class FloodWait(RuntimeError):
     """Telegram explicitly instructed the client to wait before another request."""
 
@@ -191,6 +195,9 @@ class DownloadWorker:
         except AuthorizationRequired as exc:
             self.store.require_auth(task.task_id, str(exc))
             logger.warning("Task %s paused pending Telegram authorization", task.task_id)
+        except PermanentTaskError as exc:
+            self.store.fail(task.task_id, str(exc))
+            logger.warning("Task %s failed permanently: %s", task.task_id, exc)
         except RetryableTaskError as exc:
             if task.attempts >= self.max_attempts:
                 self.store.fail(

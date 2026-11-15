@@ -403,3 +403,36 @@ async def test_transient_auth_network_errors_preserve_login_flow(
     assert any("Temporary Telegram network failure" in text for text in message.answers)
     assert service.pending_phone == pending[0]
     assert service.pending_code_hash == pending[1]
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("file_size", [None, 0, -1, "1024", 1.5, True, 20 * 1024 * 1024 + 1])
+async def test_legacy_direct_media_without_valid_supported_size_fails_closed(
+    tmp_path: Path, file_size
+):
+    from app.worker import PermanentTaskError
+
+    settings = make_settings(tmp_path)
+    service = BotService(settings, client=object())
+    task_id = service.tasks.enqueue(
+        "direct-media",
+        json.dumps({
+            "file_id": "legacy-file-id",
+            "filename": "legacy.bin",
+            "file_size": file_size,
+            "source_key": "bot-123-456",
+        }),
+    )
+    task = service.tasks.claim_next()
+    bot = FakeBot(b"must-not-download")
+
+    with pytest.raises(PermanentTaskError, match="cannot be resumed safely"):
+        await service.execute_task(task, bot)
+
+    assert not list(settings.incomplete_dir.glob("*.part")) if settings.incomplete_dir.exists() else True
+    assert bot.messages
+    assert "cannot be resumed safely" in bot.messages[0][1]
+    [stored] = service.tasks.recent()
+    assert stored.task_id == task_id
+    assert stored.status == "downloading"
