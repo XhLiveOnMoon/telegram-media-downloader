@@ -677,6 +677,57 @@ async def test_incorrect_2fa_password_keeps_password_state_for_retry(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_incorrect_login_code_keeps_code_state_for_retry(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.bot as bot_module
+    from app.bot import AuthFlow, BotService
+
+    class CodeClient:
+        async def sign_in(self, **kwargs):
+            error = type("PhoneCodeInvalidError", (Exception,), {})
+            raise error("code rejected")
+
+    class FakeState:
+        current = AuthFlow.code.state
+
+        async def get_state(self):
+            return self.current
+
+        async def clear(self):
+            self.current = None
+
+    class FakeMessage:
+        chat = SimpleNamespace(type="private")
+        from_user = SimpleNamespace(id=123456)
+        text = "12345"
+
+        def __init__(self):
+            self.answers = []
+
+        async def delete(self):
+            return None
+
+        async def answer(self, text):
+            self.answers.append(text)
+
+    service = BotService(make_settings(tmp_path), CodeClient())
+    service.pending_phone = "+123456789"
+    service.pending_code_hash = "code-hash"
+    monkeypatch.setattr(bot_module, "get_service", lambda: service)
+    state = FakeState()
+    message = FakeMessage()
+
+    await bot_module.auth_code(message, state)
+
+    assert state.current == AuthFlow.code.state
+    assert service.pending_phone == "+123456789"
+    assert service.pending_code_hash == "code-hash"
+    assert service.auth_flow_generation == 0
+    assert message.answers == ["Incorrect login code. Try again."]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, monkeypatch):
     import asyncio
     from types import SimpleNamespace

@@ -671,6 +671,9 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         )
         return
     except Exception as exc:
+        if type(exc).__name__ == "PhoneCodeInvalidError":
+            await message.answer("Incorrect login code. Try again.")
+            return
         logger.warning("Telegram code verification failed: %s", type(exc).__name__)
         if is_transient_transport_error(exc):
             await message.answer(
