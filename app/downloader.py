@@ -30,6 +30,19 @@ _NETWORK_ERRNOS = {
 }
 
 
+def media_identity(message) -> str:
+    """Return the stable Telegram identity of a Document or Photo."""
+    document = getattr(message, "document", None)
+    photo = getattr(message, "photo", None)
+    if document is not None and getattr(document, "id", None) is not None:
+        return f"document-{int(document.id)}"
+    if photo is not None and getattr(photo, "id", None) is not None:
+        return f"photo-{int(photo.id)}"
+    raise DownloadError(
+        "Telegram media has no stable Document/Photo ID; refusing unsafe resume."
+    )
+
+
 def is_transient_transport_error(exc: Exception) -> bool:
     """Classify recognizable network failures without retrying arbitrary programming errors."""
     if isinstance(exc, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
@@ -172,7 +185,8 @@ class MediaDownloader:
         entity=None,
         progress_callback: ProgressCallback | None = None,
     ) -> Path:
-        source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
+        identity = media_identity(message)
+        source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{identity}"
         # The downloader semaphore and durable worker serialize all file writes.
         return await self._download_one_locked(
             message, entity, source_key, progress_callback
@@ -185,6 +199,7 @@ class MediaDownloader:
         source_key: str,
         progress_callback: ProgressCallback | None = None,
     ) -> Path:
+        identity = media_identity(message)
         document = getattr(message, "document", None)
         original_name = None
         if document:
@@ -323,6 +338,11 @@ class MediaDownloader:
                         raise DownloadError(
                             "Telegram file reference expired and the source message could not "
                             "be refreshed. Check source access and submit the link again."
+                        ) from exc
+                    if media_identity(refreshed) != identity:
+                        raise DownloadError(
+                            "Telegram media changed while refreshing its file reference; "
+                            "discarding this resume attempt to prevent mixed content."
                         ) from exc
                     message = refreshed
                     reference_refreshes += 1

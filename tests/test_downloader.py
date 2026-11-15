@@ -6,7 +6,7 @@ import pytest
 from telethon.tl.types import PeerChannel
 from telethon.utils import get_peer_id
 
-from app.downloader import DownloadError, MediaDownloader, TransientDownloadError
+from app.downloader import DownloadError, MediaDownloader, TransientDownloadError, media_identity
 from app.storage import safe_filename, stable_partial_path
 
 
@@ -28,7 +28,9 @@ def make_message(size: int = 8192):
         media=object(),
         photo=None,
         grouped_id=None,
-        document=SimpleNamespace(size=size, attributes=[SimpleNamespace(file_name="asset.bin")]),
+        document=SimpleNamespace(
+            id=9001, size=size, attributes=[SimpleNamespace(file_name="asset.bin")]
+        ),
     )
 
 
@@ -37,7 +39,7 @@ async def test_download_resumes_from_aligned_partial_file(tmp_path: Path):
     message = make_message()
     client = FakeClient([b"b" * 4096])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
     partial.write_bytes(b"a" * 4096)
 
@@ -61,7 +63,7 @@ async def test_download_truncates_unaligned_partial_tail_before_resume(tmp_path:
     message = make_message()
     client = FakeClient([b"b" * 4096])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
     partial.write_bytes(b"a" * 5000)
 
@@ -78,7 +80,7 @@ async def test_incomplete_download_keeps_partial_file_for_retry(tmp_path: Path):
     downloader = MediaDownloader(
         client, tmp_path / "complete", tmp_path / "incomplete", max_network_retries=0
     )
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
 
     with pytest.raises(DownloadError, match="Incomplete download"):
@@ -360,7 +362,7 @@ async def test_existing_completed_file_is_made_readable(tmp_path: Path):
     message = make_message()
     client = FakeClient([])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
     final = tmp_path / "complete" / f"{source_key}-asset.bin"
     final.parent.mkdir(parents=True)
     final.write_bytes(b"x" * 8192)
@@ -371,6 +373,71 @@ async def test_existing_completed_file_is_made_readable(tmp_path: Path):
     assert result == final
     assert stat.S_IMODE(final.stat().st_mode) == 0o644
     assert client.requested_offset is None
+
+
+@pytest.mark.asyncio
+async def test_replaced_media_does_not_reuse_partial_or_completed_file(tmp_path: Path):
+    original = make_message()
+    replacement = make_message()
+    replacement.document.id = 9002
+    client = FakeClient([b"n" * 8192])
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+    old_key = f"{get_peer_id(original.peer_id)}-{original.id}-{media_identity(original)}"
+    old_partial = stable_partial_path(tmp_path / "incomplete", old_key, "asset.bin")
+    old_partial.write_bytes(b"o" * 4096)
+    old_final = tmp_path / "complete" / f"{old_key}-asset.bin"
+    old_final.parent.mkdir(parents=True)
+    old_final.write_bytes(b"o" * 8192)
+
+    result = await downloader._download_one(replacement)
+
+    assert client.requested_offset == 0
+    assert result != old_final
+    assert result.read_bytes() == b"n" * 8192
+    assert old_partial.read_bytes() == b"o" * 4096
+    assert old_final.read_bytes() == b"o" * 8192
+
+
+@pytest.mark.asyncio
+async def test_file_reference_refresh_rejects_replaced_media(tmp_path: Path):
+    message = make_message()
+
+    class FileReferenceExpiredError(Exception):
+        pass
+
+    class ReplacingClient:
+        async def get_messages(self, entity, ids):
+            replacement = make_message()
+            replacement.document.id = 9002
+            return replacement
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            yield b"x" * 4096
+            raise FileReferenceExpiredError("stale reference")
+
+    downloader = MediaDownloader(
+        ReplacingClient(), tmp_path / "complete", tmp_path / "incomplete",
+        max_network_retries=1, retry_base_delay=0.001,
+    )
+
+    with pytest.raises(DownloadError, match="media changed"):
+        await downloader._download_one(message, entity=object())
+
+
+@pytest.mark.asyncio
+async def test_media_without_stable_telegram_id_is_rejected(tmp_path: Path):
+    message = make_message()
+    message.document.id = None
+    downloader = MediaDownloader(FakeClient([]), tmp_path / "complete", tmp_path / "incomplete")
+
+    with pytest.raises(DownloadError, match="no stable"):
+        await downloader._download_one(message)
+
+
+def test_photo_identity_uses_telegram_photo_id():
+    message = SimpleNamespace(document=None, photo=SimpleNamespace(id=123456))
+
+    assert media_identity(message) == "photo-123456"
 
 
 def test_safe_filename_respects_utf8_filesystem_component_limit():

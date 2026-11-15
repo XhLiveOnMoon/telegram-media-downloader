@@ -7,7 +7,7 @@ import pytest
 
 from app.bot import BotService
 from app.config import Settings
-from app.storage import prepare_directories
+from app.storage import identity_token, prepare_directories
 
 
 class FakeBot:
@@ -54,7 +54,7 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path, m
     )
     task = service.tasks.claim_next()
     bot = FakeBot(content)
-    final = settings.complete_dir / "bot-123-456-sample.bin"
+    final = settings.complete_dir / "bot-123-456-{identity_token("bot-api-file-id:opaque-file-id")}-sample.bin"
     opened_modes = []
     original_open = Path.open
 
@@ -67,7 +67,7 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path, m
 
     detail = await service.execute_task(task, bot)
 
-    partial = settings.incomplete_dir / "bot-123-456-sample.bin.part"
+    partial = settings.incomplete_dir / "bot-123-456-{identity_token("bot-api-file-id:opaque-file-id")}-sample.bin.part"
     assert task.task_id == task_id
     assert detail == final.name
     assert final.read_bytes() == content
@@ -170,7 +170,7 @@ async def test_cancel_during_completion_notification_keeps_download_completed(tm
     result = await asyncio.wait_for(operation, timeout=2)
 
     assert task.task_id == task_id
-    assert result == "bot-123-999-committed.bin"
+    assert result == "bot-123-999-{identity_token("bot-api-file-id:opaque-file-id")}-committed.bin"
     assert (settings.complete_dir / result).read_bytes() == content
 
 
@@ -179,7 +179,7 @@ async def test_existing_direct_media_file_is_made_readable(tmp_path: Path):
     settings = make_settings(tmp_path)
     prepare_directories(settings.complete_dir, settings.incomplete_dir)
     service = BotService(settings, client=object())
-    final = settings.complete_dir / "bot-123-777-existing.bin"
+    final = settings.complete_dir / "bot-123-777-{identity_token("bot-api-file-id:opaque-file-id")}-existing.bin"
     final.write_bytes(b"already committed")
     final.chmod(0o600)
     task_id = service.tasks.enqueue(
@@ -234,6 +234,70 @@ async def test_direct_media_promotion_syncs_both_directories(tmp_path: Path):
     assert settings.complete_dir in synced
     assert settings.incomplete_dir in synced
 
+
+@pytest.mark.asyncio
+async def test_replaced_media_does_not_reuse_partial_or_completed_file(tmp_path: Path):
+    original = make_message()
+    replacement = make_message()
+    replacement.document.id = 9002
+    client = FakeClient([b"n" * 8192])
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+    old_key = f"{get_peer_id(original.peer_id)}-{original.id}-{media_identity(original)}"
+    old_partial = stable_partial_path(tmp_path / "incomplete", old_key, "asset.bin")
+    old_partial.write_bytes(b"o" * 4096)
+    old_final = tmp_path / "complete" / f"{old_key}-asset.bin"
+    old_final.parent.mkdir(parents=True)
+    old_final.write_bytes(b"o" * 8192)
+
+    result = await downloader._download_one(replacement)
+
+    assert client.requested_offset == 0
+    assert result != old_final
+    assert result.read_bytes() == b"n" * 8192
+    assert old_partial.read_bytes() == b"o" * 4096
+    assert old_final.read_bytes() == b"o" * 8192
+
+
+@pytest.mark.asyncio
+async def test_file_reference_refresh_rejects_replaced_media(tmp_path: Path):
+    message = make_message()
+
+    class FileReferenceExpiredError(Exception):
+        pass
+
+    class ReplacingClient:
+        async def get_messages(self, entity, ids):
+            replacement = make_message()
+            replacement.document.id = 9002
+            return replacement
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            yield b"x" * 4096
+            raise FileReferenceExpiredError("stale reference")
+
+    downloader = MediaDownloader(
+        ReplacingClient(), tmp_path / "complete", tmp_path / "incomplete",
+        max_network_retries=1, retry_base_delay=0.001,
+    )
+
+    with pytest.raises(DownloadError, match="media changed"):
+        await downloader._download_one(message, entity=object())
+
+
+@pytest.mark.asyncio
+async def test_media_without_stable_telegram_id_is_rejected(tmp_path: Path):
+    message = make_message()
+    message.document.id = None
+    downloader = MediaDownloader(FakeClient([]), tmp_path / "complete", tmp_path / "incomplete")
+
+    with pytest.raises(DownloadError, match="no stable"):
+        await downloader._download_one(message)
+
+
+def test_photo_identity_uses_telegram_photo_id():
+    message = SimpleNamespace(document=None, photo=SimpleNamespace(id=123456))
+
+    assert media_identity(message) == "photo-123456"
 
 
 @pytest.mark.asyncio

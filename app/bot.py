@@ -23,7 +23,7 @@ from .downloader import (
     is_transient_transport_error,
 )
 from .links import parse_message_link
-from .storage import prepare_directories, safe_filename, stable_partial_path
+from .storage import identity_token, prepare_directories, safe_filename, stable_partial_path
 from .task_store import DownloadTask, DownloadTaskStore
 from .worker import (
     AuthorizationRequired,
@@ -147,10 +147,16 @@ class BotService:
                 filename = safe_filename(payload["filename"])
                 file_size = payload.get("file_size")
                 source_key = payload["source_key"]
-                partial = stable_partial_path(
-                    self.settings.incomplete_dir, source_key, filename
+                # Legacy queued tasks lack file_unique_id; file_id is a conservative
+                # fallback so they cannot collide with newly submitted media.
+                media_identity = payload.get("media_identity") or identity_token(
+                    f"bot-api-file-id:{file_id}"
                 )
-                final = self.settings.complete_dir / f"{source_key}-{filename}"
+                identity_scoped_key = f"{source_key}-{media_identity}"
+                partial = stable_partial_path(
+                    self.settings.incomplete_dir, identity_scoped_key, filename
+                )
+                final = self.settings.complete_dir / f"{identity_scoped_key}-{filename}"
                 self.settings.complete_dir.mkdir(parents=True, exist_ok=True)
 
                 if final.exists() and (
@@ -611,13 +617,20 @@ async def direct_media(message: Message) -> None:
     if message.photo:
         photo = message.photo[-1]
         file_id = photo.file_id
+        file_unique_id = photo.file_unique_id
         filename = f"telegram-photo-{message.message_id}.jpg"
         file_size = photo.file_size
     elif media:
         file_id = media.file_id
+        file_unique_id = media.file_unique_id
         filename = getattr(media, "file_name", None) or f"telegram-{message.message_id}.bin"
         file_size = getattr(media, "file_size", None)
     else:
+        return
+    if not file_unique_id:
+        await message.answer(
+            "Telegram did not provide a stable file identity; this media cannot be queued safely."
+        )
         return
     if file_size and file_size > 20 * 1024 * 1024:
         await message.answer(
@@ -633,6 +646,9 @@ async def direct_media(message: Message) -> None:
             "filename": filename,
             "file_size": file_size,
             "source_key": source_key,
+            "media_identity": identity_token(
+                f"bot-api-file-unique-id:{file_unique_id}"
+            ),
         },
         ensure_ascii=False,
     )
