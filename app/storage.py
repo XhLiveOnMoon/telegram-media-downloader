@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 _INVALID = re.compile(r"[\\/:*?\"<>|\x00-\x1f]+")
 
 
