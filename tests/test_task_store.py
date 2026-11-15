@@ -30,6 +30,32 @@ def test_running_tasks_are_marked_interrupted_after_restart(tmp_path: Path):
     assert "restarted" in task.detail.lower()
 
 
+def test_interrupted_tasks_can_be_recovered_and_marked_running(tmp_path: Path):
+    database = tmp_path / "tasks.sqlite3"
+    first_instance = DownloadTaskStore(database)
+    task_id = first_instance.create("message-link", "https://t.me/example/789")
+
+    restarted_instance = DownloadTaskStore(database)
+    [interrupted] = restarted_instance.interrupted()
+    assert interrupted.task_id == task_id
+    assert interrupted.status == "interrupted"
+
+    restarted_instance.mark_running(task_id)
+    [recovered] = restarted_instance.recent()
+    assert recovered.status == "running"
+    assert "resumed" in recovered.detail.lower()
+
+
+def test_sqlite_uses_wal_journal_mode(tmp_path: Path):
+    database = tmp_path / "tasks.sqlite3"
+    DownloadTaskStore(database)
+    import sqlite3
+
+    with sqlite3.connect(database) as connection:
+        [mode] = connection.execute("PRAGMA journal_mode").fetchone()
+    assert mode.lower() == "wal"
+
+
 def test_failed_task_and_recent_limit(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
     old_id = store.create("direct-media", "old.bin")
