@@ -89,16 +89,22 @@ class DownloadWorker:
                         logger.exception("Could not persist interrupted state for task %s", task_id)
                 self.active_task_id = None
                 self.operation_task = None
-                logger.exception("Download scheduler loop failed; retrying in 5 seconds")
+                logger.exception("Download scheduler loop failed; retrying safely")
+                if self.needs_orphan_recovery:
+                    try:
+                        recovered = self.store.recover_orphaned_downloads()
+                        self.needs_orphan_recovery = False
+                        if recovered:
+                            logger.warning(
+                                "Recovered %s orphaned task(s) after a storage error",
+                                recovered,
+                            )
+                        continue
+                    except Exception:
+                        logger.exception("Could not recover orphaned tasks; retrying in 5 seconds")
                 await asyncio.sleep(5)
 
     async def _run_once(self) -> None:
-        if self.needs_orphan_recovery:
-            recovered = self.store.recover_orphaned_downloads()
-            self.needs_orphan_recovery = False
-            if recovered:
-                logger.warning("Recovered %s orphaned task(s) after a storage error", recovered)
-
         cooldown = max(
             self.store.cooldown_remaining(),
             self.local_cooldown_until - time.time(),
