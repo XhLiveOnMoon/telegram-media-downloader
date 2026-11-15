@@ -35,9 +35,9 @@ Create the application and download directories, then set ownership to UID/GID 1
 
 ```bash
 mkdir -p data
-sudo mkdir -p /data/media/downloads/complete/telegram
-sudo mkdir -p /data/media/downloads/incomplete/telegram
-sudo chown -R 1000:1000 data /data/media/downloads/complete/telegram /data/media/downloads/incomplete/telegram
+mkdir -p /data/media/downloads/complete/telegram
+mkdir -p /data/media/downloads/incomplete/telegram
+chown -R 1000:1000 data /data/media/downloads/complete/telegram /data/media/downloads/incomplete/telegram
 ```
 
 Configure secrets:
