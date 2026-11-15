@@ -213,6 +213,26 @@ class DownloadTaskStore:
             )
             return cursor.rowcount == 1
 
+    def cancel_active(self, task_id: int, detail: str = "Cancelled by owner") -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE download_tasks SET status='cancelled', detail=?, "
+                "next_attempt_at=NULL, updated_at=? WHERE id=? AND status='downloading'",
+                (detail[:1000], self._now(), task_id),
+            )
+            return cursor.rowcount == 1
+
+    def requeue(self, task_id: int) -> bool:
+        """Allow explicit retry only for terminal failed/cancelled tasks."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE download_tasks SET status='queued', detail=?, attempts=0, "
+                "next_attempt_at=NULL, updated_at=? WHERE id=? "
+                "AND status IN ('failed','cancelled')",
+                ("Manually requeued by owner", self._now(), task_id),
+            )
+            return cursor.rowcount == 1
+
     def retry_later(self, task_id: int, detail: str, delay_seconds: float) -> None:
         delay = max(0.0, delay_seconds)
         with self._connect() as connection:
