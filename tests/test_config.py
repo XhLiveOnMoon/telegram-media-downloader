@@ -91,9 +91,9 @@ def test_data_directory_rejects_symlink_escape(tmp_path: Path):
         )
 
 
-def test_data_directory_must_be_outside_download_mount(tmp_path: Path):
+def test_data_directory_must_be_separate_from_download_mount(tmp_path: Path):
     downloads = tmp_path / "downloads"
-    with pytest.raises(ValueError, match="outside the shared downloads mount"):
+    with pytest.raises(ValueError, match="separate from the shared downloads mount"):
         Settings(
             bot_token="test-token",
             api_id=12345,
