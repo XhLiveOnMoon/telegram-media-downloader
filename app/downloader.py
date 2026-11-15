@@ -371,7 +371,7 @@ class MediaDownloader:
                     )
                     raise TransientDownloadError(
                         f"Network/download failed after {network_attempt + 1} attempts "
-                        f"({type(exc).__name__}: {exc}). Partial data was kept for resume."
+                        f"({type(exc).__name__}). Partial data was kept for resume."
                     ) from exc
 
                 delay = min(self.retry_base_delay * (2**network_attempt), 30.0)

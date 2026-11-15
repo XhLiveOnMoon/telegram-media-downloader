@@ -527,3 +527,27 @@ async def test_progress_storage_failure_aborts_download_and_keeps_partial(tmp_pa
     assert partial.read_bytes() == b"x" * 8192
     assert not list((tmp_path / "complete").glob("*"))
 
+
+
+
+@pytest.mark.asyncio
+async def test_transient_error_message_is_not_exposed_to_user(tmp_path: Path):
+    secret = "opaque-session-or-request-secret"
+
+    class FailingClient:
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            raise ConnectionError(secret)
+            yield b""
+
+    downloader = MediaDownloader(
+        FailingClient(),
+        tmp_path / "complete",
+        tmp_path / "incomplete",
+        max_network_retries=0,
+    )
+
+    with pytest.raises(TransientDownloadError) as caught:
+        await downloader._download_one(make_message())
+
+    assert secret not in str(caught.value)
+    assert "ConnectionError" in str(caught.value)
