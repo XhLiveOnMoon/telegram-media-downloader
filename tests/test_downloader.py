@@ -39,7 +39,7 @@ async def test_download_resumes_from_aligned_partial_file(tmp_path: Path):
     message = make_message()
     client = FakeClient([b"b" * 4096])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
     partial.write_bytes(b"a" * 4096)
 
@@ -63,7 +63,7 @@ async def test_download_truncates_unaligned_partial_tail_before_resume(tmp_path:
     message = make_message()
     client = FakeClient([b"b" * 4096])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
     partial.write_bytes(b"a" * 5000)
 
@@ -80,7 +80,7 @@ async def test_incomplete_download_keeps_partial_file_for_retry(tmp_path: Path):
     downloader = MediaDownloader(
         client, tmp_path / "complete", tmp_path / "incomplete", max_network_retries=0
     )
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
 
     with pytest.raises(DownloadError, match="Incomplete download"):
@@ -362,7 +362,7 @@ async def test_existing_completed_file_is_made_readable(tmp_path: Path):
     message = make_message()
     client = FakeClient([])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
-    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
     final = tmp_path / "complete" / f"{source_key}-asset.bin"
     final.parent.mkdir(parents=True)
     final.write_bytes(b"x" * 8192)

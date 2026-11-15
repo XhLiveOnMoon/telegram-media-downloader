@@ -54,7 +54,8 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path, m
     )
     task = service.tasks.claim_next()
     bot = FakeBot(content)
-    final = settings.complete_dir / "bot-123-456-{identity_token("bot-api-file-id:opaque-file-id")}-sample.bin"
+    identity = identity_token("bot-api-file-id:opaque-file-id")
+    final = settings.complete_dir / f"bot-123-456-{identity}-sample.bin"
     opened_modes = []
     original_open = Path.open
 
@@ -67,7 +68,7 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path, m
 
     detail = await service.execute_task(task, bot)
 
-    partial = settings.incomplete_dir / "bot-123-456-{identity_token("bot-api-file-id:opaque-file-id")}-sample.bin.part"
+    partial = settings.incomplete_dir / f"bot-123-456-{identity}-sample.bin.part"
     assert task.task_id == task_id
     assert detail == final.name
     assert final.read_bytes() == content
@@ -170,7 +171,8 @@ async def test_cancel_during_completion_notification_keeps_download_completed(tm
     result = await asyncio.wait_for(operation, timeout=2)
 
     assert task.task_id == task_id
-    assert result == "bot-123-999-{identity_token("bot-api-file-id:opaque-file-id")}-committed.bin"
+    identity = identity_token("bot-api-file-id:opaque-file-id")
+    assert result == f"bot-123-999-{identity}-committed.bin"
     assert (settings.complete_dir / result).read_bytes() == content
 
 
@@ -179,7 +181,8 @@ async def test_existing_direct_media_file_is_made_readable(tmp_path: Path):
     settings = make_settings(tmp_path)
     prepare_directories(settings.complete_dir, settings.incomplete_dir)
     service = BotService(settings, client=object())
-    final = settings.complete_dir / "bot-123-777-{identity_token("bot-api-file-id:opaque-file-id")}-existing.bin"
+    identity = identity_token("bot-api-file-id:opaque-file-id")
+    final = settings.complete_dir / f"bot-123-777-{identity}-existing.bin"
     final.write_bytes(b"already committed")
     final.chmod(0o600)
     task_id = service.tasks.enqueue(
