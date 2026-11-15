@@ -65,7 +65,9 @@ async def test_download_truncates_unaligned_partial_tail_before_resume(tmp_path:
 async def test_incomplete_download_keeps_partial_file_for_retry(tmp_path: Path):
     message = make_message()
     client = FakeClient([b"b" * 1024])
-    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+    downloader = MediaDownloader(
+        client, tmp_path / "complete", tmp_path / "incomplete", max_network_retries=0
+    )
     source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
     partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
 
