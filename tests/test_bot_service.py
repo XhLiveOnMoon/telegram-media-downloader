@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -88,3 +89,27 @@ async def test_direct_media_rejects_size_mismatch_for_worker_retry(tmp_path: Pat
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
+
+
+
+@pytest.mark.asyncio
+async def test_mtproto_authorization_waits_for_persisted_global_cooldown(tmp_path: Path):
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def is_user_authorized(self):
+            self.calls += 1
+            return True
+
+    client = FakeClient()
+    service = BotService(make_settings(tmp_path), client)
+    service.note_flood_wait(0.05)
+
+    started = time.monotonic()
+    assert await service.is_authorized() is True
+    elapsed = time.monotonic() - started
+
+    assert elapsed >= 0.04
+    assert client.calls == 1
+    assert service.tasks.cooldown_remaining() == 0
