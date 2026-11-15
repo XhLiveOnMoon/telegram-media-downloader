@@ -278,7 +278,7 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
     if not callback.from_user or callback.from_user.id != svc.settings.owner_telegram_id:
         await callback.answer("Not authorized", show_alert=True)
         return
-    if await svc.client.is_user_authorized():
+    if await svc.is_authorized():
         await callback.answer("Already authorized")
         await callback.bot.send_message(
             callback.from_user.id, "Telegram account is already authorized."
