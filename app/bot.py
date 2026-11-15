@@ -119,6 +119,7 @@ class BotService:
         try:
             if task.task_type == "message-link":
                 link = parse_message_link(task.source)
+
                 def progress(downloaded: int, total: int | None, filename: str) -> None:
                     self.tasks.update_progress(task.task_id, downloaded, total, filename)
 
