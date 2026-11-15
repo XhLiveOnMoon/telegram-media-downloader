@@ -154,7 +154,7 @@ class BotService:
                 )
                 identity_scoped_key = f"{source_key}-{media_identity}"
                 partial = stable_partial_path(
-                    self.settings.incomplete_dir, identity_scoped_key, filename
+                    self.settings.incomplete_dir, identity_scoped_key
                 )
                 final = self.settings.complete_dir / f"{identity_scoped_key}-{filename}"
                 self.settings.complete_dir.mkdir(parents=True, exist_ok=True)

@@ -45,8 +45,8 @@ def reserve_incomplete_path(directory: Path, filename: str) -> Path:
     return candidate
 
 
-def stable_partial_path(directory: Path, source_key: str, filename: str) -> Path:
-    """Build a deterministic partial path so a later retry can resume it."""
+def stable_partial_path(directory: Path, source_key: str) -> Path:
+    """Key resumable partial data by source and media identity, not display filename."""
     directory.mkdir(parents=True, exist_ok=True)
     directory.chmod(0o755)
-    return directory / f"{source_key}-{safe_filename(filename)}.part"
+    return directory / f"{source_key}.part"

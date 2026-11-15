@@ -68,7 +68,7 @@ async def test_direct_media_is_fsynced_and_atomically_promoted(tmp_path: Path, m
 
     detail = await service.execute_task(task, bot)
 
-    partial = settings.incomplete_dir / f"bot-123-456-{identity}-sample.bin.part"
+    partial = settings.incomplete_dir / f"bot-123-456-{identity}.part"
     assert task.task_id == task_id
     assert detail == final.name
     assert final.read_bytes() == content

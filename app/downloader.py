@@ -209,7 +209,7 @@ class MediaDownloader:
             extension = ".jpg" if getattr(message, "photo", None) else ".bin"
             original_name = f"telegram-{message.id}{extension}"
         filename = safe_filename(original_name, f"telegram-{message.id}")
-        partial = stable_partial_path(self.incomplete_dir, source_key, filename)
+        partial = stable_partial_path(self.incomplete_dir, source_key)
         final = self.complete_dir / f"{source_key}-{filename}"
         self.complete_dir.mkdir(parents=True, exist_ok=True)
         size = getattr(document, "size", None) if document else None

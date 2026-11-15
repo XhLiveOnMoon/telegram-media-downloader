@@ -40,7 +40,7 @@ async def test_download_resumes_from_aligned_partial_file(tmp_path: Path):
     client = FakeClient([b"b" * 4096])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
     source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
-    partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
+    partial = stable_partial_path(tmp_path / "incomplete", source_key)
     partial.write_bytes(b"a" * 4096)
 
     progress = []
@@ -64,7 +64,7 @@ async def test_download_truncates_unaligned_partial_tail_before_resume(tmp_path:
     client = FakeClient([b"b" * 4096])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
     source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
-    partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
+    partial = stable_partial_path(tmp_path / "incomplete", source_key)
     partial.write_bytes(b"a" * 5000)
 
     result = await downloader._download_one(message)
@@ -81,7 +81,7 @@ async def test_incomplete_download_keeps_partial_file_for_retry(tmp_path: Path):
         client, tmp_path / "complete", tmp_path / "incomplete", max_network_retries=0
     )
     source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
-    partial = stable_partial_path(tmp_path / "incomplete", source_key, "asset.bin")
+    partial = stable_partial_path(tmp_path / "incomplete", source_key)
 
     with pytest.raises(DownloadError, match="Incomplete download"):
         await downloader._download_one(message)
@@ -376,6 +376,22 @@ async def test_existing_completed_file_is_made_readable(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_filename_change_keeps_same_media_partial_resume(tmp_path: Path):
+    message = make_message()
+    client = FakeClient([b"b" * 4096])
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
+    partial = stable_partial_path(tmp_path / "incomplete", source_key)
+    partial.write_bytes(b"a" * 4096)
+    message.document.attributes[0].file_name = "renamed.bin"
+
+    result = await downloader._download_one(message)
+
+    assert client.requested_offset == 4096
+    assert result.name.endswith("-renamed.bin")
+    assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
+
+@pytest.mark.asyncio
 async def test_replaced_media_does_not_reuse_partial_or_completed_file(tmp_path: Path):
     original = make_message()
     replacement = make_message()
@@ -383,7 +399,7 @@ async def test_replaced_media_does_not_reuse_partial_or_completed_file(tmp_path:
     client = FakeClient([b"n" * 8192])
     downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
     old_key = f"{get_peer_id(original.peer_id)}-{original.id}-{media_identity(original)}"
-    old_partial = stable_partial_path(tmp_path / "incomplete", old_key, "asset.bin")
+    old_partial = stable_partial_path(tmp_path / "incomplete", old_key)
     old_partial.write_bytes(b"o" * 4096)
     old_final = tmp_path / "complete" / f"{old_key}-asset.bin"
     old_final.parent.mkdir(parents=True)
