@@ -77,7 +77,7 @@ Open a private chat with the Bot and send `/start` once so it can send you statu
 - `/auth` — start or renew the user-account authorization flow.
 - `/download <message-link>` — download media from a Telegram message.
 - `/status` — show Bot, account authorization, and active download status.
-- `/tasks` — show the latest 10 download tasks and their queue/retry/auth/completion states.
+- `/tasks` — show the latest 10 download tasks, per-file byte/percentage progress, retry attempts, and retry countdown. MTProto progress is persisted at 8 MiB fsync checkpoints; Bot API direct transfers expose completion progress only because the current download interface has no chunk callback.
 - `/retry <task_id>` — requeue a failed or cancelled task.
 - `/cancel [task_id]` — cancel a queued/active task; without an ID, cancel the current authorization conversation.
 - Send or forward a media file directly to the Bot for a small-file download.
