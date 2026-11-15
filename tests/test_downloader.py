@@ -504,3 +504,26 @@ async def test_invalid_or_expired_auth_key_requires_reauthorization(tmp_path: Pa
     )
     with pytest.raises(AuthorizationRequiredError):
         await downloader._download_one(message)
+
+
+@pytest.mark.asyncio
+async def test_progress_storage_failure_aborts_download_and_keeps_partial(tmp_path: Path):
+    import sqlite3
+
+    message = make_message()
+    client = FakeClient([b"x" * 8192])
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}-{media_identity(message)}"
+    partial = stable_partial_path(tmp_path / "incomplete", source_key)
+
+    def unavailable_progress(downloaded, total, filename):
+        if downloaded:
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        await downloader._download_one(message, progress_callback=unavailable_progress)
+
+    assert partial.exists()
+    assert partial.read_bytes() == b"x" * 8192
+    assert not list((tmp_path / "complete").glob("*"))
+

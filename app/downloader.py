@@ -4,6 +4,7 @@ import asyncio
 import errno
 import logging
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -177,10 +178,7 @@ class MediaDownloader:
     ) -> None:
         if callback is None:
             return
-        try:
-            callback(downloaded, total, filename)
-        except Exception as exc:
-            logger.warning("Could not persist download progress: %s", type(exc).__name__)
+        callback(downloaded, total, filename)
 
     async def _download_one(
         self,
@@ -289,6 +287,10 @@ class MediaDownloader:
 
             except FloodWaitError:
                 # The durable worker owns the global cooldown and retry schedule.
+                raise
+            except sqlite3.Error:
+                # Progress is part of the durable task state. Do not continue
+                # downloading when its persistence has failed.
                 raise
             except DownloadError:
                 raise
