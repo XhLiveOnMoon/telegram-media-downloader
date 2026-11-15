@@ -1,4 +1,6 @@
 import sqlite3
+
+import pytest
 from pathlib import Path
 
 from app.task_store import DownloadTaskStore
@@ -147,3 +149,25 @@ def test_failed_task_and_recent_limit(tmp_path: Path):
     assert len(records) == 1
     assert records[0].task_id == new_id
     assert records[0].status == "queued"
+
+
+
+def test_only_worker_claimed_tasks_can_complete(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/222")
+
+    with pytest.raises(RuntimeError, match="not in downloading state"):
+        store.complete(task_id, "should-not-complete")
+
+    [task] = store.recent()
+    assert task.status == "queued"
+
+
+def test_queued_task_can_be_cancelled_without_claiming(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/333")
+
+    assert store.cancel(task_id) is True
+    assert store.cancel(task_id) is False
+    [task] = store.recent()
+    assert task.status == "cancelled"
