@@ -53,6 +53,7 @@ class DownloadWorker:
         self.cancel_requested = False
         self.local_cooldown_until = 0.0
         self.needs_orphan_recovery = False
+        self.pending_cancel_task_id: int | None = None
 
     def extend_local_cooldown(self, seconds: float) -> None:
         self.local_cooldown_until = max(
@@ -80,16 +81,36 @@ class DownloadWorker:
             except Exception:
                 task_id = self.active_task_id
                 if task_id is not None:
-                    try:
-                        self.store.interrupt(
-                            task_id, "Worker loop failed; task will be recovered on restart"
-                        )
-                    except Exception:
-                        self.needs_orphan_recovery = True
-                        logger.exception("Could not persist interrupted state for task %s", task_id)
+                    if self.cancel_requested:
+                        self.pending_cancel_task_id = task_id
+                    else:
+                        try:
+                            self.store.interrupt(
+                                task_id, "Worker loop failed; task will be recovered on restart"
+                            )
+                        except Exception:
+                            self.needs_orphan_recovery = True
+                            logger.exception(
+                                "Could not persist interrupted state for task %s", task_id
+                            )
                 self.active_task_id = None
                 self.operation_task = None
                 logger.exception("Download scheduler loop failed; retrying safely")
+                if self.pending_cancel_task_id is not None:
+                    try:
+                        cancelled_id = self.pending_cancel_task_id
+                        if not self.store.cancel_active(cancelled_id):
+                            self.store.cancel(cancelled_id)
+                        self.pending_cancel_task_id = None
+                        self.cancel_requested = False
+                        continue
+                    except Exception:
+                        logger.exception(
+                            "Could not persist cancellation for task %s",
+                            self.pending_cancel_task_id,
+                        )
+                        await asyncio.sleep(5)
+                        continue
                 if self.needs_orphan_recovery:
                     try:
                         recovered = self.store.recover_orphaned_downloads()
