@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from html import escape as html_escape
 
@@ -162,15 +163,30 @@ class BotService:
 
             if task.task_type == "direct-media":
                 payload = json.loads(task.source)
-                file_id = payload["file_id"]
-                filename = safe_filename(payload["filename"])
+                file_id = payload.get("file_id")
+                filename_value = payload.get("filename")
+                source_key = payload.get("source_key")
+                stored_identity = payload.get("media_identity")
+                if not isinstance(file_id, str) or not file_id:
+                    raise PermanentTaskError("Direct Bot API task has an invalid file identifier.")
+                if not isinstance(filename_value, str):
+                    raise PermanentTaskError("Direct Bot API task has an invalid filename.")
+                if not isinstance(source_key, str) or not re.fullmatch(
+                    r"bot-[0-9]+-[0-9]+", source_key
+                ):
+                    raise PermanentTaskError("Direct Bot API task has an invalid source identity.")
+                if stored_identity is not None and (
+                    not isinstance(stored_identity, str)
+                    or not re.fullmatch(r"[0-9a-f]{24}", stored_identity)
+                ):
+                    raise PermanentTaskError("Direct Bot API task has an invalid media identity.")
+                filename = safe_filename(filename_value)
                 file_size = payload.get("file_size")
                 size_error = direct_media_size_error(file_size)
                 if size_error is not None:
                     raise PermanentTaskError(
                         f"Direct Bot API task cannot be resumed safely: {size_error}"
                     )
-                source_key = payload["source_key"]
                 # Legacy queued tasks lack file_unique_id; file_id is a conservative
                 # fallback so they cannot collide with newly submitted media.
                 media_identity = payload.get("media_identity") or identity_token(

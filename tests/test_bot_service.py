@@ -438,3 +438,41 @@ async def test_legacy_direct_media_without_valid_supported_size_fails_closed(
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_key", "../../outside"),
+        ("media_identity", "../escape"),
+    ],
+)
+async def test_direct_media_rejects_path_components_from_persisted_payload(
+    tmp_path: Path, field: str, value: str
+):
+    from app.worker import PermanentTaskError
+
+    settings = make_settings(tmp_path)
+    service = BotService(settings, client=object())
+    payload = {
+        "file_id": "opaque-file-id",
+        "filename": "safe.bin",
+        "file_size": 10,
+        "source_key": "bot-123-456",
+        "media_identity": identity_token("bot-api-file-unique-id:valid"),
+    }
+    payload[field] = value
+    task_id = service.tasks.enqueue("direct-media", json.dumps(payload))
+    task = service.tasks.claim_next()
+    bot = FakeBot(b"must-not-download")
+
+    with pytest.raises(PermanentTaskError, match="invalid"):
+        await service.execute_task(task, bot)
+
+    assert bot.download_calls == 0
+    assert bot.messages
+    [stored] = service.tasks.recent()
+    assert stored.task_id == task_id
+    assert stored.status == "downloading"
