@@ -14,6 +14,7 @@ from .links import MessageLink
 from .storage import safe_filename, stable_partial_path
 
 logger = logging.getLogger(__name__)
+_CHECKPOINT_BYTES = 8 * 1024 * 1024
 
 
 class DownloadError(RuntimeError):
@@ -71,6 +72,15 @@ class MediaDownloader:
         album = [item for item in nearby if item and item.grouped_id == message.grouped_id]
         return sorted(album, key=lambda item: item.id) or [message]
 
+    @staticmethod
+    def _sync_directory(directory: Path) -> None:
+        """Persist directory-entry changes such as the final atomic rename."""
+        descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
     async def _download_one(self, message) -> Path:
         document = getattr(message, "document", None)
         original_name = None
@@ -96,27 +106,45 @@ class MediaDownloader:
                     partial.unlink(missing_ok=True)
                     offset = 0
                 # Telegram file offsets are aligned to 4 KiB.
-                # Discard an incomplete tail before resuming.
                 aligned_offset = offset - (offset % 4096)
                 if aligned_offset != offset:
                     with partial.open("r+b") as stream:
                         stream.truncate(aligned_offset)
+                        stream.flush()
+                        os.fsync(stream.fileno())
                     offset = aligned_offset
+
                 if not (size and offset == size):
-                    async for chunk in self.client.iter_download(
-                        message.media,
-                        offset=offset,
-                        request_size=512 * 1024,
-                        chunk_size=512 * 1024,
-                    ):
-                        with partial.open("ab") as stream:
-                            stream.write(chunk)
-                if size and partial.stat().st_size != size:
+                    partial.parent.mkdir(parents=True, exist_ok=True)
+                    with partial.open("ab") as stream:
+                        since_checkpoint = 0
+                        try:
+                            async for chunk in self.client.iter_download(
+                                message.media,
+                                offset=offset,
+                                request_size=512 * 1024,
+                                chunk_size=512 * 1024,
+                            ):
+                                stream.write(chunk)
+                                since_checkpoint += len(chunk)
+                                if since_checkpoint >= _CHECKPOINT_BYTES:
+                                    stream.flush()
+                                    os.fsync(stream.fileno())
+                                    since_checkpoint = 0
+                        finally:
+                            # Flush every yielded byte before retrying or propagating errors.
+                            stream.flush()
+                            os.fsync(stream.fileno())
+
+                actual_size = partial.stat().st_size
+                if size and actual_size != size:
                     raise DownloadError(
-                        f"Incomplete download ({partial.stat().st_size}/{size} bytes); "
-                        "retry to resume."
+                        f"Incomplete download ({actual_size}/{size} bytes); retry to resume."
                     )
                 os.replace(partial, final)
+                self._sync_directory(self.complete_dir)
+                if partial.parent != self.complete_dir:
+                    self._sync_directory(partial.parent)
                 return final
             except FloodWaitError as exc:
                 raise DownloadError(
