@@ -13,6 +13,7 @@ A private, manually triggered Telegram media downloader. A Telegram Bot provides
 - Link-based downloads keep partial files in the incomplete directory and resume from the last aligned byte offset on retry.
 - Completed files are atomically moved into the complete directory.
 - Persistent Telethon session stored in the data volume.
+- SQLite task history survives container restarts; tasks that were running during a restart are marked as interrupted.
 
 ## Requirements
 
@@ -70,6 +71,7 @@ Open a private chat with the Bot and send `/start` once so it can send you statu
 - `/auth` — start or renew the user-account authorization flow.
 - `/download <message-link>` — download media from a Telegram message.
 - `/status` — show Bot, account authorization, and active download status.
+- `/tasks` — show the latest 10 download tasks, including completed, failed, and interrupted tasks.
 - `/cancel` — cancel the current authorization conversation.
 - Send or forward a media file directly to the Bot for a small-file download.
 
@@ -112,6 +114,6 @@ GitHub Actions runs lint, unit tests, and Python bytecode compilation on pushes 
 ## Current limitations
 
 - Directly sent or forwarded media uses the standard Bot API download endpoint and is limited to 20 MB. For larger files, send the original message link with `/download` so Telethon downloads it through your authorized account.
-- Link-based downloads can resume a partial file when the same source message and media are still accessible. The partial file is keyed by source peer and message ID.
+- Link-based downloads can resume a partial file when the same source message and media are still accessible. The partial file is keyed by source peer and message ID. A SQLite task ledger records outcomes; it does not automatically resume an interrupted job after restart—you can resend the same link to continue its partial file.
 - Downloads are serialized by default (`MAX_CONCURRENT_DOWNLOADS=1`) to keep session and disk behavior predictable.
 - Authorization prompts are private-chat only. Use `/cancel` to abandon an in-progress login.
