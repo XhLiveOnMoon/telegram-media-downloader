@@ -320,6 +320,20 @@ async def test_unauthorized_session_keeps_auth_required_tasks_paused(tmp_path: P
         (20 * 1024 * 1024 + 1, "exceeds"),
     ],
 )
+@pytest.mark.parametrize("protected", [True, False, None])
+def test_direct_media_protection_guard(protected):
+    from types import SimpleNamespace
+
+    from app.bot import direct_media_protection_error
+
+    message = SimpleNamespace(has_protected_content=protected)
+    result = direct_media_protection_error(message)
+    if protected:
+        assert "protected" in result
+    else:
+        assert result is None
+
+
 def test_direct_media_size_guard_fails_closed(file_size, expected):
     result = direct_media_size_error(file_size)
     if expected is None:

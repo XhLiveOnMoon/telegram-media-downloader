@@ -43,6 +43,13 @@ router = Router()
 _MAX_BOT_API_DOWNLOAD_BYTES = 20 * 1024 * 1024
 
 
+def direct_media_protection_error(message: Message) -> str | None:
+    """Reject Bot API media explicitly marked as protected content."""
+    if getattr(message, "has_protected_content", False):
+        return "This Telegram message is protected from forwarding/downloading."
+    return None
+
+
 def direct_media_size_error(file_size: int | None) -> str | None:
     """Fail closed when Bot API size metadata cannot prove the file is downloadable."""
     if isinstance(file_size, bool) or not isinstance(file_size, int) or file_size <= 0:
@@ -792,6 +799,10 @@ async def direct_media(message: Message) -> None:
     """Queue directly sent/forwarded media; all sources share the same worker."""
     svc = get_service()
     if not svc.is_owner(message):
+        return
+    protection_error = direct_media_protection_error(message)
+    if protection_error is not None:
+        await message.answer(protection_error)
         return
     media = message.document or message.video or message.audio or message.voice
     if message.photo:
