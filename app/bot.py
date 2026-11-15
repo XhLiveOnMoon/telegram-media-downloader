@@ -85,7 +85,7 @@ class BotService:
                 detail = ", ".join(path.name for path in paths)
                 await bot.send_message(
                     self.settings.owner_telegram_id,
-                    f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\\n{detail}",
+                    f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\n{detail}",
                 )
                 return detail
 
@@ -121,7 +121,7 @@ class BotService:
                 self._sync_directory(final.parent)
                 await bot.send_message(
                     self.settings.owner_telegram_id,
-                    f"直传任务 #{task.task_id} 完成：\\n{final.name}",
+                    f"直传任务 #{task.task_id} 完成：\n{final.name}",
                 )
                 return final.name
 
@@ -168,11 +168,11 @@ async def start(message: Message) -> None:
     if not svc.is_owner(message):
         return
     await message.answer(
-        "Telegram Media Downloader is ready.\\n\\n"
-        "/auth — authorize your Telegram account\\n"
-        "/download <message link> — queue a download\\n"
-        "/status — show service status\\n"
-        "/tasks — show recent download tasks\\n"
+        "Telegram Media Downloader is ready.\n\n"
+        "/auth — authorize your Telegram account\n"
+        "/download <message link> — queue a download\n"
+        "/status — show service status\n"
+        "/tasks — show recent download tasks\n"
         "/cancel — cancel the current interaction"
     )
 
@@ -189,8 +189,8 @@ async def status(message: Message) -> None:
         state = f"temporarily unavailable ({type(exc).__name__})"
     cooldown = svc.tasks.cooldown_remaining()
     await message.answer(
-        f"Bot: running\\nTelegram account: {state}\\n"
-        f"Active downloads: {svc.active_downloads}\\n"
+        f"Bot: running\nTelegram account: {state}\n"
+        f"Active downloads: {svc.active_downloads}\n"
         f"Global Telegram cooldown: {cooldown:.0f}s"
     )
 
@@ -212,7 +212,7 @@ async def tasks(message: Message) -> None:
             f"#{record.task_id} [{record.status}] {record.task_type}: "
             f"{source}{detail}"
         )
-    await message.answer("\\n".join(lines))
+    await message.answer("\n".join(lines))
 
 
 @router.message(F.chat.type == "private", Command("auth"))
