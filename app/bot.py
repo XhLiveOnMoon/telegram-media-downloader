@@ -73,6 +73,7 @@ async def start(message: Message) -> None:
         "/auth — authorize your Telegram account\n"
         "/download <message link> — download media\n"
         "/status — show service status\n"
+        "/tasks — show recent download tasks\n"
         "/cancel — cancel the current interaction"
     )
 
