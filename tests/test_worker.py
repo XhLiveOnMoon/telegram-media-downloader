@@ -251,3 +251,47 @@ async def test_user_cancellation_stops_one_task_but_worker_continues(tmp_path):
     assert states[cancelled_id] == "cancelled"
     assert states[next_id] == "completed"
     assert handled == [cancelled_id, next_id]
+
+
+
+@pytest.mark.asyncio
+async def test_worker_recovers_orphaned_task_after_state_write_failure(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/9876")
+    original_complete = store.complete
+    complete_calls = 0
+    handler_calls = 0
+
+    def flaky_complete(current_task_id, detail=""):
+        nonlocal complete_calls
+        complete_calls += 1
+        if complete_calls == 1:
+            raise OSError("simulated temporary SQLite write failure")
+        original_complete(current_task_id, detail)
+
+    def flaky_interrupt(current_task_id, detail):
+        raise OSError("simulated temporary SQLite write failure")
+
+    store.complete = flaky_complete
+    store.interrupt = flaky_interrupt
+
+    async def handler(task):
+        nonlocal handler_calls
+        handler_calls += 1
+        return "saved.bin"
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    for _ in range(200):
+        [task] = store.recent()
+        if task.status == "completed":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "completed"
+    assert task.attempts == 2
+    assert handler_calls == 2
