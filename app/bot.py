@@ -383,7 +383,8 @@ async def recover_interrupted_tasks(bot) -> None:
             svc.tasks.fail(task.task_id, "Stored source link is invalid; submit it again.")
             continue
 
-        svc.tasks.mark_running(task.task_id)
+        if not svc.tasks.mark_running(task.task_id):
+            continue
         svc.active_downloads += 1
         try:
             paths = await svc.downloader.download(link)
