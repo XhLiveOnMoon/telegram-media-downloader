@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from html import escape as html_escape
 import json
 import logging
 import os
@@ -195,7 +196,7 @@ class BotService:
 
     async def _notify(self, bot: Bot, text: str) -> None:
         try:
-            await bot.send_message(self.settings.owner_telegram_id, text)
+            await bot.send_message(self.settings.owner_telegram_id, html_escape(text))
         except Exception as exc:
             retry_after = getattr(exc, "retry_after", None)
             if retry_after is not None:
@@ -275,7 +276,8 @@ async def tasks(message: Message) -> None:
                 source = "direct media"
         else:
             source = record.source[:100]
-        detail = f" — {record.detail[:100]}" if record.detail else ""
+        source = html_escape(str(source))
+        detail = f" — {html_escape(record.detail[:100])}" if record.detail else ""
         lines.append(
             f"#{record.task_id} [{record.status}] {record.task_type}: "
             f"{source}{detail}"
