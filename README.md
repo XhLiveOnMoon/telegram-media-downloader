@@ -6,7 +6,7 @@ A private, manually triggered Telegram media downloader. A Telegram Bot provides
 
 - Private Bot commands restricted to one configured Telegram user ID.
 - Interactive MTProto login through the Bot: phone number, login code, and optional 2FA password.
-- Automatic authorization checks every five minutes, with a private Bot notification and a one-tap reauthorization button when the session is unavailable.
+- Automatic authorization checks every 15 minutes, with a private Bot notification and a one-tap reauthorization button when the session is unavailable.
 - Public message links (`t.me/<channel>/<message_id>`) and private message links (`t.me/c/<channel_id>/<message_id>`), provided the authorized account can access the source.
 - Album-aware message download.
 - Directly sent or forwarded Bot media for files up to the standard Bot API download limit (20 MB).
