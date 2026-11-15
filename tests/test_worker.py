@@ -122,3 +122,66 @@ async def test_transient_failure_uses_persistent_retry_schedule(tmp_path):
     assert task.status == "retry_wait"
     assert task.next_attempt_at is not None
     assert task.next_attempt_at > time.time() + 100
+
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_marks_active_task_interrupted(tmp_path):
+    database = tmp_path / "tasks.sqlite3"
+    store = DownloadTaskStore(database)
+    task_id = store.enqueue("message-link", "https://t.me/example/321")
+    entered = asyncio.Event()
+
+    async def handler(task):
+        entered.set()
+        await asyncio.Future()
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [interrupted] = store.recent()
+    assert interrupted.task_id == task_id
+    assert interrupted.status == "interrupted"
+
+    restarted = DownloadTaskStore(database)
+    recovered = restarted.claim_next()
+    assert recovered.task_id == task_id
+    assert recovered.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_stops_retrying_after_configured_attempt_limit(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/654")
+    calls = 0
+
+    async def handler(task):
+        nonlocal calls
+        calls += 1
+        raise RetryableTaskError("temporary failure")
+
+    worker = DownloadWorker(
+        store,
+        handler,
+        poll_interval=0.01,
+        max_attempts=3,
+        retry_base_delay=0.01,
+        retry_max_delay=0.02,
+    )
+    run = asyncio.create_task(worker.run())
+    for _ in range(300):
+        [task] = store.recent()
+        if task.status == "failed":
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    [task] = store.recent()
+    assert calls == 3
+    assert task.task_id == task_id
+    assert task.status == "failed"
+    assert "retry limit" in task.detail.lower()
