@@ -14,8 +14,10 @@ class FakeBot:
     def __init__(self, content: bytes):
         self.content = content
         self.messages = []
+        self.download_calls = 0
 
     async def download(self, *, file, destination):
+        self.download_calls += 1
         Path(destination).write_bytes(self.content)
         return destination
 
@@ -430,7 +432,7 @@ async def test_legacy_direct_media_without_valid_supported_size_fails_closed(
     with pytest.raises(PermanentTaskError, match="cannot be resumed safely"):
         await service.execute_task(task, bot)
 
-    assert not list(settings.incomplete_dir.glob("*.part")) if settings.incomplete_dir.exists() else True
+    assert bot.download_calls == 0
     assert bot.messages
     assert "cannot be resumed safely" in bot.messages[0][1]
     [stored] = service.tasks.recent()
