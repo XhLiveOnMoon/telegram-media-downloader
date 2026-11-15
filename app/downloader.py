@@ -45,7 +45,7 @@ class MediaDownloader:
         complete_dir: Path,
         incomplete_dir: Path,
         max_concurrent_downloads: int = 1,
-        max_network_retries: int = 5,
+        max_network_retries: int = 1,
         retry_base_delay: float = 2.0,
     ) -> None:
         self.client = client
@@ -197,7 +197,13 @@ class MediaDownloader:
                         refreshed = await self.client.get_messages(
                             entity or message.peer_id, ids=message.id
                         )
+                    except FloodWaitError:
+                        raise
                     except Exception as refresh_exc:
+                        if type(refresh_exc).__name__ in _AUTH_ERROR_NAMES:
+                            raise AuthorizationRequiredError(
+                                "Telegram account authorization expired while refreshing media."
+                            ) from refresh_exc
                         logger.warning(
                             "Could not refresh Telegram media reference for message %s: %s",
                             message.id,
