@@ -10,7 +10,13 @@ def safe_filename(value: str, fallback: str = "telegram-media") -> str:
     name = _INVALID.sub("_", Path(value).name).strip(" .")
     if not name or name in {".", ".."}:
         name = fallback
-    return name[:180]
+    encoded = name.encode("utf-8")[:180]
+    while encoded:
+        try:
+            return encoded.decode("utf-8")
+        except UnicodeDecodeError:
+            encoded = encoded[:-1]
+    return fallback
 
 
 def prepare_directories(complete: Path, incomplete: Path) -> None:

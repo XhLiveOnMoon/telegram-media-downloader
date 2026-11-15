@@ -20,6 +20,7 @@ from .downloader import (
     AuthorizationRequiredError,
     MediaDownloader,
     TransientDownloadError,
+    is_transient_transport_error,
 )
 from .links import parse_message_link
 from .storage import prepare_directories, safe_filename, stable_partial_path
@@ -129,7 +130,7 @@ class BotService:
                         link, progress_callback=progress
                     )
                 detail = ", ".join(path.name for path in paths)
-                await self._notify(
+                await self._notify_after_commit(
                     bot, f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\n{detail}"
                 )
                 return detail
@@ -155,13 +156,18 @@ class BotService:
                     os.chmod(final, 0o644)
                     with final.open("rb+") as stream:
                         os.fsync(stream.fileno())
-                    await self._notify(bot, f"直传任务 #{task.task_id} 已完成：\n{final.name}")
+                    self._sync_directory(final.parent)
+                    await self._notify_after_commit(
+                        bot, f"直传任务 #{task.task_id} 已完成：\n{final.name}"
+                    )
                     return final.name
 
                 # Bot API downloads do not expose a byte-offset resume interface.
                 # Restart this small (<=20 MB) transfer from byte zero, never append.
                 self.tasks.update_progress(task.task_id, 0, file_size, filename)
                 partial.unlink(missing_ok=True)
+                partial.touch(mode=0o600)
+                os.chmod(partial, 0o600)
                 await bot.download(file=file_id, destination=partial)
                 actual_size = partial.stat().st_size
                 if file_size is not None and actual_size != file_size:
@@ -170,12 +176,20 @@ class BotService:
                         f"Bot API file size mismatch ({actual_size}/{file_size} bytes)"
                     )
                 self.tasks.update_progress(task.task_id, actual_size, file_size, filename)
-                os.chmod(partial, 0o644)
                 with partial.open("rb+") as stream:
                     os.fsync(stream.fileno())
                 os.replace(partial, final)
+                os.chmod(final, 0o644)
+                # Sync the promoted file through a writable descriptor, then persist
+                # both sides of the cross-directory rename before reporting completion.
+                with final.open("rb+") as stream:
+                    os.fsync(stream.fileno())
                 self._sync_directory(final.parent)
-                await self._notify(bot, f"直传任务 #{task.task_id} 完成：\n{final.name}")
+                if partial.parent != final.parent:
+                    self._sync_directory(partial.parent)
+                await self._notify_after_commit(
+                    bot, f"直传任务 #{task.task_id} 完成：\n{final.name}"
+                )
                 return final.name
 
             raise ValueError(f"Unsupported task type: {task.task_type}")
@@ -218,13 +232,7 @@ class BotService:
                     f"Telegram 要求等待 {int(delay)} 秒，整个下载队列将在等待结束后继续。",
                 )
                 raise FloodWait(int(delay)) from exc
-            if type(exc).__name__ in {
-                "TelegramNetworkError", "TelegramServerError", "ServerError",
-                "TimedOutError", "RpcCallFailError", "ConnectionError", "TimeoutError",
-                "ClientError", "ClientConnectionError", "ClientConnectorError",
-                "ClientOSError", "ClientPayloadError", "ServerDisconnectedError",
-                "ServerTimeoutError",
-            }:
+            if is_transient_transport_error(exc):
                 if self.worker and task.attempts >= self.worker.max_attempts:
                     await self._notify(
                         bot,
@@ -239,6 +247,13 @@ class BotService:
                 f"下载任务 #{task.task_id} 失败：{type(exc).__name__}。可通过 /tasks 查看状态。",
             )
             raise
+
+    async def _notify_after_commit(self, bot: Bot, text: str) -> None:
+        """Cancellation after durable file promotion must not mark the task cancelled."""
+        try:
+            await self._notify(bot, text)
+        except asyncio.CancelledError:
+            logger.info("Cancellation arrived after file promotion; preserving completed result")
 
     async def _notify(self, bot: Bot, text: str) -> None:
         try:

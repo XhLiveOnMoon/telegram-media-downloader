@@ -7,7 +7,7 @@ from telethon.tl.types import PeerChannel
 from telethon.utils import get_peer_id
 
 from app.downloader import DownloadError, MediaDownloader, TransientDownloadError
-from app.storage import stable_partial_path
+from app.storage import safe_filename, stable_partial_path
 
 
 class FakeClient:
@@ -27,6 +27,7 @@ def make_message(size: int = 8192):
         peer_id=PeerChannel(123456),
         media=object(),
         photo=None,
+        grouped_id=None,
         document=SimpleNamespace(size=size, attributes=[SimpleNamespace(file_name="asset.bin")]),
     )
 
@@ -256,3 +257,123 @@ async def test_file_reference_refresh_does_not_consume_network_retry_budget(tmp_
 
     assert client.calls == 3
     assert result.read_bytes() == b"z" * 8192
+
+
+@pytest.mark.asyncio
+async def test_unexpected_programming_error_is_not_retried_as_network_failure(tmp_path: Path):
+    message = make_message()
+
+    class BrokenClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.calls += 1
+            raise ValueError("unexpected client state")
+            yield b""
+
+    client = BrokenClient()
+    downloader = MediaDownloader(
+        client, tmp_path / "complete", tmp_path / "incomplete",
+        max_network_retries=5, retry_base_delay=0.001,
+    )
+
+    with pytest.raises(DownloadError, match="Non-retryable Telegram download failure"):
+        await downloader._download_one(message)
+
+    assert client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_protected_message_is_rejected_without_downloading(tmp_path: Path):
+    from app.links import MessageLink
+
+    message = make_message()
+    message.noforwards = True
+
+    class ProtectedClient:
+        def __init__(self):
+            self.download_calls = 0
+
+        async def get_entity(self, username):
+            return object()
+
+        async def get_messages(self, entity, ids):
+            return message
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.download_calls += 1
+            yield b"x" * 8192
+
+    client = ProtectedClient()
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+
+    with pytest.raises(DownloadError, match="protected"):
+        await downloader.download(
+            MessageLink(kind="public", username="example", message_id=42)
+        )
+
+    assert client.download_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_protected_album_is_rejected_before_any_item_download(tmp_path: Path):
+    from app.links import MessageLink
+
+    first = make_message()
+    first.id = 41
+    first.grouped_id = 7
+    second = make_message()
+    second.id = 42
+    second.grouped_id = 7
+    second.noforwards = True
+
+    class ProtectedAlbumClient:
+        def __init__(self):
+            self.download_calls = 0
+
+        async def get_entity(self, username):
+            return object()
+
+        async def get_messages(self, entity, ids):
+            if isinstance(ids, int):
+                return first
+            return [first, second]
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.download_calls += 1
+            yield b"x" * 8192
+
+    client = ProtectedAlbumClient()
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+
+    with pytest.raises(DownloadError, match="protected"):
+        await downloader.download(
+            MessageLink(kind="public", username="example", message_id=42)
+        )
+
+    assert client.download_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_existing_completed_file_is_made_readable(tmp_path: Path):
+    message = make_message()
+    client = FakeClient([])
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+    source_key = f"{get_peer_id(message.peer_id)}-{message.id}"
+    final = tmp_path / "complete" / f"{source_key}-asset.bin"
+    final.parent.mkdir(parents=True)
+    final.write_bytes(b"x" * 8192)
+    final.chmod(0o600)
+
+    result = await downloader._download_one(message)
+
+    assert result == final
+    assert stat.S_IMODE(final.stat().st_mode) == 0o644
+    assert client.requested_offset is None
+
+
+def test_safe_filename_respects_utf8_filesystem_component_limit():
+    filename = safe_filename("界" * 100)
+
+    assert len(filename.encode("utf-8")) <= 180

@@ -19,6 +19,22 @@ class Settings:
     max_concurrent_downloads: int = 1
     log_level: str = "INFO"
 
+    def __post_init__(self) -> None:
+        complete = self.complete_dir.resolve()
+        incomplete = self.incomplete_dir.resolve()
+        valid_layout = (
+            complete.name == "telegram"
+            and complete.parent.name == "complete"
+            and incomplete.name == "telegram"
+            and incomplete.parent.name == "incomplete"
+            and complete.parent.parent == incomplete.parent.parent
+        )
+        if not valid_layout:
+            raise ValueError(
+                "Download paths must be sibling Telegram-only directories: "
+                "<downloads>/complete/telegram and <downloads>/incomplete/telegram"
+            )
+
     @classmethod
     def from_env(cls) -> Settings:
         load_dotenv()
@@ -43,8 +59,8 @@ class Settings:
             api_hash=os.environ["API_HASH"],
             owner_telegram_id=owner_id,
             data_dir=Path(os.getenv("DATA_DIR", "./data")),
-            complete_dir=Path(os.getenv("COMPLETE_DIR", "/downloads/complete")),
-            incomplete_dir=Path(os.getenv("INCOMPLETE_DIR", "/downloads/incomplete")),
+            complete_dir=Path(os.getenv("COMPLETE_DIR", "/downloads/complete/telegram")),
+            incomplete_dir=Path(os.getenv("INCOMPLETE_DIR", "/downloads/incomplete/telegram")),
             max_concurrent_downloads=concurrency,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         )

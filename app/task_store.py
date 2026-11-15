@@ -42,6 +42,7 @@ class DownloadTaskStore:
             self._migrate(connection)
             connection.execute(
                 "UPDATE download_tasks SET status='interrupted', "
+                "attempts=MAX(0, attempts - 1), next_attempt_at=NULL, "
                 "detail='Service restarted before task completion', updated_at=? "
                 "WHERE status='downloading'",
                 (self._now(),),
@@ -78,7 +79,13 @@ class DownloadTaskStore:
         columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(download_tasks)")
         }
-        if "attempts" in columns and "next_attempt_at" in columns:
+        schema_row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='download_tasks'"
+        ).fetchone()
+        schema_sql = schema_row["sql"] or ""
+        has_all_statuses = all(f"'{status}'" in schema_sql for status in self._STATUSES)
+        has_retry_columns = {"attempts", "next_attempt_at"}.issubset(columns)
+        if has_retry_columns and has_all_statuses:
             if "progress_bytes" not in columns:
                 connection.execute(
                     "ALTER TABLE download_tasks ADD COLUMN progress_bytes "
@@ -101,41 +108,55 @@ class DownloadTaskStore:
                 "CREATE INDEX IF NOT EXISTS idx_download_tasks_created "
                 "ON download_tasks(created_at DESC)"
             )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS scheduler_state "
-                "(key TEXT PRIMARY KEY, value REAL NOT NULL)"
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO scheduler_state(key, value) "
-                "VALUES ('cooldown_until', 0)"
-            )
+            self._ensure_scheduler_schema(connection)
             return
 
-        # Rebuild rather than ALTER: the original table CHECK constraint does not
-        # permit the queue states required by the durable scheduler.
+        # Rebuild older/intermediate schemas when retry columns or the status
+        # CHECK constraint are behind. Preserve progress and retry metadata.
+        has_attempts = "attempts" in columns
+        has_next_attempt = "next_attempt_at" in columns
+        has_progress = "progress_bytes" in columns
+        has_total = "total_bytes" in columns
+        has_current_file = "current_file" in columns
         connection.execute("ALTER TABLE download_tasks RENAME TO download_tasks_legacy")
-        # Explicit indexes keep their names after a table rename.
         connection.execute("DROP INDEX IF EXISTS idx_download_tasks_created")
         connection.execute("DROP INDEX IF EXISTS idx_download_tasks_queue")
         self._create_schema(connection)
+
+        attempts_expr = "attempts" if has_attempts else "0"
+        attempts_expr = (
+            f"CASE WHEN status IN ('running','downloading') "
+            f"THEN MAX(0, {attempts_expr} - 1) ELSE {attempts_expr} END"
+        )
+        next_attempt_expr = "next_attempt_at" if has_next_attempt else "NULL"
+        progress_expr = "progress_bytes" if has_progress else "0"
+        total_expr = "total_bytes" if has_total else "NULL"
+        current_file_expr = "current_file" if has_current_file else "''"
         connection.execute(
-            """
+            f"""
             INSERT INTO download_tasks
-                (id, task_type, source, status, detail, created_at, updated_at)
+                (id, task_type, source, status, detail, created_at, updated_at,
+                 attempts, next_attempt_at, progress_bytes, total_bytes, current_file)
             SELECT id, task_type, source,
                 CASE status
                     WHEN 'running' THEN 'interrupted'
+                    WHEN 'downloading' THEN 'interrupted'
                     WHEN 'interrupted' THEN 'interrupted'
+                    WHEN 'queued' THEN 'queued'
+                    WHEN 'retry_wait' THEN 'retry_wait'
+                    WHEN 'auth_required' THEN 'auth_required'
+                    WHEN 'cancelled' THEN 'cancelled'
                     WHEN 'completed' THEN 'completed'
                     WHEN 'failed' THEN 'failed'
                     ELSE 'failed'
                 END,
                 CASE
-                    WHEN status='running' AND detail=''
+                    WHEN status IN ('running', 'downloading') AND detail=''
                     THEN 'Service restarted before task completion'
                     ELSE detail
                 END,
-                created_at, updated_at
+                created_at, updated_at, {attempts_expr}, {next_attempt_expr},
+                {progress_expr}, {total_expr}, {current_file_expr}
             FROM download_tasks_legacy
             """
         )
@@ -170,6 +191,10 @@ class DownloadTaskStore:
             "CREATE INDEX idx_download_tasks_created "
             "ON download_tasks(created_at DESC)"
         )
+        cls._ensure_scheduler_schema(connection)
+
+    @staticmethod
+    def _ensure_scheduler_schema(connection: sqlite3.Connection) -> None:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS scheduler_state "
             "(key TEXT PRIMARY KEY, value REAL NOT NULL)"
@@ -198,6 +223,11 @@ class DownloadTaskStore:
         """Atomically claim the oldest due task, respecting the global FloodWait."""
         timestamp = time.time() if now is None else now
         with self._connect() as connection:
+            active = connection.execute(
+                "SELECT 1 FROM download_tasks WHERE status='downloading' LIMIT 1"
+            ).fetchone()
+            if active is not None:
+                return None
             cooldown = connection.execute(
                 "SELECT value FROM scheduler_state WHERE key='cooldown_until'"
             ).fetchone()
@@ -240,7 +270,16 @@ class DownloadTaskStore:
         self._set_status(task_id, "failed", detail)
 
     def interrupt(self, task_id: int, detail: str) -> None:
-        self._set_status(task_id, "interrupted", detail)
+        """Interrupt a task without charging the network retry budget."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE download_tasks SET status='interrupted', detail=?, "
+                "attempts=MAX(0, attempts - 1), next_attempt_at=NULL, updated_at=? "
+                "WHERE id=? AND status='downloading'",
+                (detail[:1000], self._now(), task_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"Task {task_id} is not in downloading state")
 
     def require_auth(self, task_id: int, detail: str) -> None:
         self._set_status(task_id, "auth_required", detail)
@@ -292,13 +331,22 @@ class DownloadTaskStore:
             )
             return cursor.rowcount == 1
 
-    def retry_later(self, task_id: int, detail: str, delay_seconds: float) -> None:
+    def retry_later(
+        self,
+        task_id: int,
+        detail: str,
+        delay_seconds: float,
+        *,
+        preserve_attempts: bool = False,
+    ) -> None:
         delay = max(0.0, delay_seconds)
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE download_tasks SET status='retry_wait', detail=?, "
-                "next_attempt_at=?, updated_at=? WHERE id=? AND status='downloading'",
-                (detail[:1000], time.time() + delay, self._now(), task_id),
+                "next_attempt_at=?, updated_at=?, "
+                "attempts=CASE WHEN ? THEN MAX(0, attempts - 1) ELSE attempts END "
+                "WHERE id=? AND status='downloading'",
+                (detail[:1000], time.time() + delay, self._now(), int(preserve_attempts), task_id),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError(f"Task {task_id} is not in downloading state")
@@ -338,11 +386,12 @@ class DownloadTaskStore:
                 raise RuntimeError(f"Task {task_id} is not in downloading state")
 
     def recover_orphaned_downloads(self) -> int:
-        """Recover a claimed task after the worker lost the ability to persist its outcome."""
+        """Recover claimed work without charging a failed network attempt."""
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE download_tasks SET status='interrupted', detail=?, "
-                "next_attempt_at=NULL, updated_at=? WHERE status='downloading'",
+                "attempts=MAX(0, attempts - 1), next_attempt_at=NULL, updated_at=? "
+                "WHERE status='downloading'",
                 ("Recovered after a worker persistence failure", self._now()),
             )
             return cursor.rowcount

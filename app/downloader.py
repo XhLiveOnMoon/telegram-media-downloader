@@ -18,6 +18,25 @@ from .storage import safe_filename, stable_partial_path
 logger = logging.getLogger(__name__)
 _CHECKPOINT_BYTES = 8 * 1024 * 1024
 ProgressCallback = Callable[[int, int | None, str], None]
+_TRANSIENT_ERROR_NAMES = {
+    "ClientError", "ClientConnectionError", "ClientConnectorError", "ClientOSError",
+    "ClientPayloadError", "ConnectionNotInitedError", "InterdcCallError", "RpcCallFailError",
+    "ServerDisconnectedError", "ServerError", "ServerTimeoutError", "TelegramNetworkError",
+    "TelegramServerError", "TimedOutError",
+}
+_NETWORK_ERRNOS = {
+    errno.ECONNABORTED, errno.ECONNREFUSED, errno.ECONNRESET, errno.EHOSTUNREACH,
+    errno.ENETDOWN, errno.ENETUNREACH, errno.ETIMEDOUT,
+}
+
+
+def is_transient_transport_error(exc: Exception) -> bool:
+    """Classify recognizable network failures without retrying arbitrary programming errors."""
+    if isinstance(exc, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
+        return True
+    if isinstance(exc, OSError) and exc.errno in _NETWORK_ERRNOS:
+        return True
+    return type(exc).__name__ in _TRANSIENT_ERROR_NAMES
 
 
 class DownloadError(RuntimeError):
@@ -79,10 +98,13 @@ class MediaDownloader:
                 raise
             except Exception as exc:
                 self._translate_rpc_error(exc, "reading the source album")
+            media_messages = [item for item in messages if item and item.media]
+            if any(getattr(item, "noforwards", False) for item in media_messages):
+                raise DownloadError(
+                    "This Telegram message is protected from forwarding/downloading."
+                )
             results: list[Path] = []
-            for item in messages:
-                if not item or not item.media:
-                    continue
+            for item in media_messages:
                 results.append(
                     await self._download_one(
                         item, entity=entity, progress_callback=progress_callback
@@ -99,13 +121,7 @@ class MediaDownloader:
             raise AuthorizationRequiredError(
                 "Telegram account authorization is required. Run /auth to resume."
             ) from exc
-        if isinstance(exc, (ConnectionError, OSError, asyncio.TimeoutError)) or name in {
-            "ServerError",
-            "TimedOutError",
-            "RpcCallFailError",
-            "InterdcCallError",
-            "ConnectionNotInitedError",
-        }:
+        if is_transient_transport_error(exc):
             raise TransientDownloadError(
                 f"Temporary Telegram network failure while {context}: {name}"
             ) from exc
@@ -186,6 +202,7 @@ class MediaDownloader:
             os.chmod(final, 0o644)
             with final.open("rb+") as stream:
                 os.fsync(stream.fileno())
+            self._sync_directory(self.complete_dir)
             self._report_progress(progress_callback, final.stat().st_size, size, filename)
             return final
 
@@ -211,6 +228,7 @@ class MediaDownloader:
                 if not (size and offset == size):
                     partial.parent.mkdir(parents=True, exist_ok=True)
                     with partial.open("ab") as stream:
+                        os.chmod(partial, 0o600)
                         since_checkpoint = 0
                         downloaded = offset
                         try:
@@ -242,10 +260,10 @@ class MediaDownloader:
                     raise ConnectionError(
                         f"Incomplete download ({actual_size}/{size} bytes); retry to resume."
                     )
-                os.chmod(partial, 0o644)
-                with partial.open("rb+") as stream:
-                    os.fsync(stream.fileno())
                 os.replace(partial, final)
+                os.chmod(final, 0o644)
+                with final.open("rb+") as stream:
+                    os.fsync(stream.fileno())
                 self._sync_directory(self.complete_dir)
                 if partial.parent != self.complete_dir:
                     self._sync_directory(partial.parent)
@@ -291,11 +309,7 @@ class MediaDownloader:
                             raise AuthorizationRequiredError(
                                 "Telegram account authorization expired while refreshing media."
                             ) from refresh_exc
-                        if isinstance(
-                            refresh_exc, (ConnectionError, OSError, asyncio.TimeoutError)
-                        ) or type(refresh_exc).__name__ in {
-                            "ServerError", "TimedOutError", "RpcCallFailError"
-                        }:
+                        if is_transient_transport_error(refresh_exc):
                             raise TransientDownloadError(
                                 "Network failure while refreshing Telegram file reference."
                             ) from refresh_exc
@@ -317,6 +331,11 @@ class MediaDownloader:
                         message.id,
                     )
                     continue
+
+                if not is_transient_transport_error(exc):
+                    raise DownloadError(
+                        f"Non-retryable Telegram download failure ({type(exc).__name__})."
+                    ) from exc
 
                 if network_attempt >= self.max_network_retries:
                     logger.warning(
