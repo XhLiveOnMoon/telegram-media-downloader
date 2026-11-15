@@ -144,6 +144,8 @@ class BotService:
                     file_size is None or final.stat().st_size == file_size
                 ):
                     os.chmod(final, 0o644)
+                    with final.open("rb+") as stream:
+                        os.fsync(stream.fileno())
                     await self._notify(bot, f"直传任务 #{task.task_id} 已完成：\n{final.name}")
                     return final.name
 
@@ -156,9 +158,9 @@ class BotService:
                     raise RetryableTaskError(
                         f"Bot API file size mismatch ({actual_size}/{file_size} bytes)"
                     )
+                os.chmod(partial, 0o644)
                 with partial.open("rb+") as stream:
                     os.fsync(stream.fileno())
-                os.chmod(partial, 0o644)
                 os.replace(partial, final)
                 self._sync_directory(final.parent)
                 await self._notify(bot, f"直传任务 #{task.task_id} 完成：\n{final.name}")
