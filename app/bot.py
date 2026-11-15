@@ -515,6 +515,11 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
             f"Telegram asks you to wait {exc.seconds} seconds before requesting another login code."
         )
         return
+    except sqlite3.Error:
+        await message.answer(
+            "Local session storage is temporarily unavailable. Retry the same phone number."
+        )
+        return
     except Exception as exc:
         logger.warning("Telegram code request failed: %s", type(exc).__name__)
         if is_transient_transport_error(exc):
@@ -562,6 +567,11 @@ async def auth_code(message: Message, state: FSMContext) -> None:
             f"Telegram asks you to wait {exc.seconds} seconds before retrying this login step."
         )
         return
+    except sqlite3.Error:
+        await message.answer(
+            "Local session storage is temporarily unavailable. Retry the same login code."
+        )
+        return
     except Exception as exc:
         logger.warning("Telegram code verification failed: %s", type(exc).__name__)
         if is_transient_transport_error(exc):
@@ -591,6 +601,11 @@ async def auth_password(message: Message, state: FSMContext) -> None:
         svc.note_flood_wait(exc.seconds)
         await message.answer(
             f"Telegram asks you to wait {exc.seconds} seconds before retrying 2FA."
+        )
+        return
+    except sqlite3.Error:
+        await message.answer(
+            "Local session storage is temporarily unavailable. Retry the same 2FA password."
         )
         return
     except Exception as exc:

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import stat
 import time
 from pathlib import Path
@@ -336,8 +337,15 @@ def test_direct_media_size_guard_fails_closed(file_size, expected):
         ("password", "password", ("+123456789", "code-hash")),
     ],
 )
-async def test_transient_auth_network_errors_preserve_login_flow(
-    handler_name, initial_state, pending, monkeypatch
+@pytest.mark.parametrize(
+    ("failure_type", "expected_message"),
+    [
+        (ConnectionError, "Temporary Telegram network failure"),
+        (sqlite3.OperationalError, "Local session storage is temporarily unavailable"),
+    ],
+)
+async def test_transient_auth_failures_preserve_login_flow(
+    handler_name, initial_state, pending, failure_type, expected_message, monkeypatch
 ):
     import asyncio
     from types import SimpleNamespace
@@ -371,10 +379,10 @@ async def test_transient_auth_network_errors_preserve_login_flow(
 
     class BrokenClient:
         async def send_code_request(self, phone):
-            raise ConnectionError("temporary network disconnect")
+            raise failure_type("temporary login operation failure")
 
         async def sign_in(self, **kwargs):
-            raise ConnectionError("temporary network disconnect")
+            raise failure_type("temporary login operation failure")
 
     settings = make_settings(Path(".").resolve() / ".test-state-unused")
     service = SimpleNamespace(
@@ -401,7 +409,7 @@ async def test_transient_auth_network_errors_preserve_login_flow(
     await handler(message, state)
 
     assert state.cleared is False
-    assert any("Temporary Telegram network failure" in text for text in message.answers)
+    assert any(expected_message in text for text in message.answers)
     assert service.pending_phone == pending[0]
     assert service.pending_code_hash == pending[1]
 
