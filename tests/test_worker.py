@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -120,4 +121,4 @@ async def test_transient_failure_uses_persistent_retry_schedule(tmp_path):
     assert task.task_id == task_id
     assert task.status == "retry_wait"
     assert task.next_attempt_at is not None
-    assert task.next_attempt_at > __import__("time").time() + 100
+    assert task.next_attempt_at > time.time() + 100
