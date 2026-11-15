@@ -24,7 +24,10 @@ async def monitor_authorization(bot: Bot, owner_id: int) -> None:
             if resumed:
                 await bot.send_message(
                     owner_id,
-                    f"Telegram account is authorized; {resumed} paused task(s) were returned to the queue.",
+                    (
+                        "Telegram account is authorized; "
+                        f"{resumed} paused task(s) were returned to the queue."
+                    ),
                 )
             if not authorized and previous is not False:
                 markup = InlineKeyboardMarkup(
