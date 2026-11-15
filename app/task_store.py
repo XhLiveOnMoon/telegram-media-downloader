@@ -20,6 +20,9 @@ class DownloadTask:
     updated_at: str
     attempts: int = 0
     next_attempt_at: float | None = None
+    progress_bytes: int = 0
+    total_bytes: int | None = None
+    current_file: str = ""
 
 
 class DownloadTaskStore:
@@ -76,6 +79,20 @@ class DownloadTaskStore:
             row["name"] for row in connection.execute("PRAGMA table_info(download_tasks)")
         }
         if "attempts" in columns and "next_attempt_at" in columns:
+            if "progress_bytes" not in columns:
+                connection.execute(
+                    "ALTER TABLE download_tasks ADD COLUMN progress_bytes "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
+            if "total_bytes" not in columns:
+                connection.execute(
+                    "ALTER TABLE download_tasks ADD COLUMN total_bytes INTEGER"
+                )
+            if "current_file" not in columns:
+                connection.execute(
+                    "ALTER TABLE download_tasks ADD COLUMN current_file "
+                    "TEXT NOT NULL DEFAULT ''"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_download_tasks_queue "
                 "ON download_tasks(status, next_attempt_at, id)"
@@ -138,7 +155,10 @@ class DownloadTaskStore:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-                next_attempt_at REAL
+                next_attempt_at REAL,
+                progress_bytes INTEGER NOT NULL DEFAULT 0 CHECK (progress_bytes >= 0),
+                total_bytes INTEGER CHECK (total_bytes IS NULL OR total_bytes >= 0),
+                current_file TEXT NOT NULL DEFAULT ''
             )
             """
         )
@@ -207,7 +227,8 @@ class DownloadTaskStore:
                 return None
             claimed = connection.execute(
                 "SELECT id AS task_id, task_type, source, status, detail, created_at, "
-                "updated_at, attempts, next_attempt_at FROM download_tasks WHERE id=?",
+                "updated_at, attempts, next_attempt_at, progress_bytes, total_bytes, "
+                "current_file FROM download_tasks WHERE id=?",
                 (task_id,),
             ).fetchone()
             return self._task(claimed)
@@ -223,6 +244,23 @@ class DownloadTaskStore:
 
     def require_auth(self, task_id: int, detail: str) -> None:
         self._set_status(task_id, "auth_required", detail)
+
+    def update_progress(
+        self,
+        task_id: int,
+        progress_bytes: int,
+        total_bytes: int | None,
+        current_file: str,
+    ) -> bool:
+        progress = max(0, int(progress_bytes))
+        total = None if total_bytes is None else max(0, int(total_bytes))
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE download_tasks SET progress_bytes=?, total_bytes=?, "
+                "current_file=?, updated_at=? WHERE id=? AND status='downloading'",
+                (progress, total, current_file[:180], self._now(), task_id),
+            )
+            return cursor.rowcount == 1
 
     def cancel(self, task_id: int, detail: str = "Cancelled by owner") -> bool:
         with self._connect() as connection:
@@ -311,8 +349,8 @@ class DownloadTaskStore:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT id AS task_id, task_type, source, status, detail, created_at, "
-                "updated_at, attempts, next_attempt_at FROM download_tasks "
-                "ORDER BY id DESC LIMIT ?",
+                "updated_at, attempts, next_attempt_at, progress_bytes, total_bytes, "
+                "current_file FROM download_tasks ORDER BY id DESC LIMIT ?",
                 (max(1, min(limit, 50)),),
             ).fetchall()
         return [self._task(row) for row in rows]
