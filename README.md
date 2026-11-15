@@ -78,7 +78,8 @@ Open a private chat with the Bot and send `/start` once so it can send you statu
 - `/download <message-link>` — download media from a Telegram message.
 - `/status` — show Bot, account authorization, and active download status.
 - `/tasks` — show the latest 10 download tasks and their queue/retry/auth/completion states.
-- `/cancel` — cancel the current authorization conversation.
+- `/retry <task_id>` — requeue a failed or cancelled task.
+- `/cancel [task_id]` — cancel a queued/active task; without an ID, cancel the current authorization conversation.
 - Send or forward a media file directly to the Bot for a small-file download.
 
 Only the configured owner ID is allowed to use the Bot. The user account must already have access to the linked channel or group. Protected content, deleted messages, and inaccessible private sources cannot be downloaded.
@@ -124,4 +125,6 @@ GitHub Actions runs lint, unit tests, and Python bytecode compilation on pushes 
 - All link-based and direct Bot API downloads pass through one persistent FIFO worker. One task is active at a time and each MTProto download uses one sequential asynchronous stream (512 KiB request chunks); there is no multi-threaded per-file download. `MAX_CONCURRENT_DOWNLOADS` is intentionally fixed at 1.
 - Telegram FloodWait responses pause the entire worker for at least the server-specified duration. The cooldown and task retry deadline are persisted in SQLite, so a container restart cannot bypass the wait. Transient network failures are retried by the worker using persistent exponential backoff.
 - Direct Bot API tasks persist their file identifier and can be replayed after a restart, but the Bot API download endpoint does not expose byte-offset resume; a retried direct-media transfer starts again from byte zero. Link-based Telethon downloads retain their partial files and resume from an aligned offset.
-- Authorization prompts are private-chat only. Use `/cancel` to abandon an in-progress login.
+- Active downloads can be cancelled with `/cancel <task_id>`; a link-based partial file is retained and can be resumed with `/retry <task_id>`. Queued tasks can also be cancelled. A direct Bot API transfer restarts from byte zero after retry.
+- Authorization prompts are private-chat only. Use `/cancel` without an ID to abandon an in-progress login.
+- Unit tests use mocked Telegram clients; CI does not perform real Telegram login or download tests and never requires live account credentials.
