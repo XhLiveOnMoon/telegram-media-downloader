@@ -108,18 +108,19 @@ async def auth_callback(callback: CallbackQuery, state: FSMContext) -> None:
         return
     if await svc.client.is_user_authorized():
         await callback.answer("Already authorized")
-        if callback.message:
-            await callback.message.answer("Telegram account is already authorized.")
+        await callback.bot.send_message(
+            callback.from_user.id, "Telegram account is already authorized."
+        )
         return
     await state.set_state(AuthFlow.phone)
     await callback.answer()
-    if callback.message:
-        await callback.message.answer(
-            "Send your phone number in international format, e.g. +1234567890."
-        )
+    await callback.bot.send_message(
+        callback.from_user.id,
+        "Send your phone number in international format, e.g. +1234567890.",
+    )
 
 
-@router.message(AuthFlow.phone, F.chat.type == "private")
+@router.message(AuthFlow.phone, F.chat.type == "private", F.text, ~F.text.startswith("/"))
 async def auth_phone(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
@@ -144,7 +145,7 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
     await message.answer("Login code requested. Send the code you received in Telegram.")
 
 
-@router.message(AuthFlow.code, F.chat.type == "private")
+@router.message(AuthFlow.code, F.chat.type == "private", F.text, ~F.text.startswith("/"))
 async def auth_code(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
@@ -176,7 +177,7 @@ async def auth_code(message: Message, state: FSMContext) -> None:
     await message.answer("Authorization successful. You can now use /download.")
 
 
-@router.message(AuthFlow.password, F.chat.type == "private")
+@router.message(AuthFlow.password, F.chat.type == "private", F.text, ~F.text.startswith("/"))
 async def auth_password(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
