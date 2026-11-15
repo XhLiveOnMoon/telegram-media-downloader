@@ -93,6 +93,7 @@ async def test_direct_media_rejects_size_mismatch_for_worker_retry(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_mtproto_authorization_waits_for_persisted_global_cooldown(tmp_path: Path):
+
     class FakeClient:
         def __init__(self):
             self.calls = 0
