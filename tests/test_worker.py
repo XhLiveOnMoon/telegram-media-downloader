@@ -471,4 +471,5 @@ async def test_worker_does_not_log_retryable_exception_message(tmp_path, caplog)
     [task] = store.recent()
     assert task.task_id == task_id
     assert task.status == "retry_wait"
-    assert secret in task.detail
+    assert secret not in task.detail
+    assert task.detail == "Temporary failure: RetryableTaskError"

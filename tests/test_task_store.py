@@ -399,3 +399,22 @@ def test_enqueue_allows_new_task_after_previous_task_is_terminal(tmp_path: Path)
     assert second_id != first_id
     records = store.recent(limit=2)
     assert {record.status for record in records} == {"completed", "queued"}
+
+
+def test_floodwait_deferral_and_global_cooldown_are_atomic(tmp_path: Path):
+    database = tmp_path / "tasks.sqlite3"
+    store = DownloadTaskStore(database)
+    task_id = store.enqueue("message-link", "https://t.me/example/905")
+    assert store.claim_next().task_id == task_id
+
+    until = store.defer_floodwait(task_id, 120, now=1000)
+
+    [task] = store.recent()
+    assert task.status == "retry_wait"
+    assert task.attempts == 0
+    assert task.next_attempt_at == until == 1120
+    assert store.cooldown_remaining(now=1000) == 120
+
+    restarted = DownloadTaskStore(database)
+    assert restarted.cooldown_remaining(now=1050) == 70
+    assert restarted.claim_next(now=1050) is None

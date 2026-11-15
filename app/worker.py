@@ -182,15 +182,12 @@ class DownloadWorker:
         except FloodWait as exc:
             # Enforce the wait in memory immediately, even if SQLite is temporarily unavailable.
             self.extend_local_cooldown(exc.seconds)
-            until = self.store.set_global_cooldown(exc.seconds)
+            # Persist the cooldown and task deferral in one SQLite transaction.
+            # This prevents a crash between two separate writes from leaving a
+            # re-claimable task without its server-mandated cooldown.
+            until = self.store.defer_floodwait(task.task_id, exc.seconds)
             self.local_cooldown_until = max(self.local_cooldown_until, until)
             delay = max(0.0, until - time.time())
-            self.store.retry_later(
-                task.task_id,
-                f"Telegram requested a global cooldown of {exc.seconds} seconds",
-                delay,
-                preserve_attempts=True,
-            )
             logger.warning(
                 "Task %s paused by Telegram FloodWait; global cooldown %.1fs",
                 task.task_id,
@@ -214,14 +211,17 @@ class DownloadWorker:
             if task.attempts >= self.max_attempts:
                 self.store.fail(
                     task.task_id,
-                    f"Retry limit reached after {task.attempts} attempts: {exc}",
+                    f"Retry limit reached after {task.attempts} attempts "
+                    f"({type(exc).__name__})",
                 )
             else:
                 delay = min(
                     self.retry_base_delay * (2 ** (task.attempts - 1)),
                     self.retry_max_delay,
                 )
-                self.store.retry_later(task.task_id, str(exc), delay)
+                self.store.retry_later(
+                    task.task_id, f"Temporary failure: {type(exc).__name__}", delay
+                )
                 logger.warning(
                     "Task %s will retry in %.1fs (attempt %s/%s)",
                     task.task_id,

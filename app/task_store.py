@@ -361,6 +361,36 @@ class DownloadTaskStore:
             if cursor.rowcount != 1:
                 raise RuntimeError(f"Task {task_id} is not in downloading state")
 
+    def defer_floodwait(
+        self, task_id: int, seconds: float, now: float | None = None
+    ) -> float:
+        """Atomically persist a FloodWait cooldown and defer its active task."""
+        base = time.time() if now is None else now
+        until = base + max(0.0, seconds)
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE scheduler_state SET value=MAX(value, ?) WHERE key='cooldown_until'",
+                (until,),
+            )
+            row = connection.execute(
+                "SELECT value FROM scheduler_state WHERE key='cooldown_until'"
+            ).fetchone()
+            persisted_until = float(row["value"])
+            cursor = connection.execute(
+                "UPDATE download_tasks SET status='retry_wait', detail=?, "
+                "next_attempt_at=?, updated_at=?, attempts=MAX(0, attempts - 1) "
+                "WHERE id=? AND status='downloading'",
+                (
+                    "Paused by Telegram FloodWait",
+                    persisted_until,
+                    self._now(),
+                    task_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"Task {task_id} is not in downloading state")
+            return persisted_until
+
     def set_global_cooldown(self, seconds: float, now: float | None = None) -> float:
         """Persist a server-mandated cooldown; never shorten an existing cooldown."""
         base = time.time() if now is None else now
