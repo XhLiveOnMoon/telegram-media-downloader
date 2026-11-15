@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from telethon import TelegramClient
 
-from .bot import build_dispatcher, recover_interrupted_tasks
+from .bot import build_dispatcher, get_service
 from .config import Settings
 
 
@@ -62,10 +62,11 @@ async def main() -> None:
     await client.connect()
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     monitor_task: asyncio.Task | None = None
-    recovery_task: asyncio.Task | None = None
+    worker_task: asyncio.Task | None = None
     try:
         dispatcher = build_dispatcher(settings, client)
-        recovery_task = asyncio.create_task(recover_interrupted_tasks(bot))
+        svc = get_service()
+        worker_task = svc.start_worker(bot)
         monitor_task = asyncio.create_task(
             monitor_authorization(bot, client, settings.owner_telegram_id)
         )
@@ -73,11 +74,11 @@ async def main() -> None:
             bot, allowed_updates=dispatcher.resolve_used_update_types()
         )
     finally:
-        for task in (monitor_task, recovery_task):
+        for task in (monitor_task, worker_task):
             if task is not None:
                 task.cancel()
         await asyncio.gather(
-            *(task for task in (monitor_task, recovery_task) if task is not None),
+            *(task for task in (monitor_task, worker_task) if task is not None),
             return_exceptions=True,
         )
         await bot.session.close()
