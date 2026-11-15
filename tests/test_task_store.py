@@ -217,3 +217,37 @@ def test_download_progress_is_persisted_and_finalized(tmp_path: Path):
     [task] = store.recent()
     assert task.status == "completed"
     assert task.progress_bytes == task.total_bytes == 4096
+
+
+
+def test_existing_queue_schema_is_upgraded_with_progress_columns(tmp_path: Path):
+    database = tmp_path / "queue-v1.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE download_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO download_tasks "
+            "(task_type, source, status, created_at, updated_at) "
+            "VALUES ('message-link', 'https://t.me/example/999', 'queued', 'old', 'old')"
+        )
+
+    store = DownloadTaskStore(database)
+    [task] = store.recent()
+    assert task.status == "queued"
+    assert task.progress_bytes == 0
+    assert task.total_bytes is None
+    assert task.current_file == ""
+    assert store.cooldown_remaining() == 0
