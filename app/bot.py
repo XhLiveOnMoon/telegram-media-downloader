@@ -315,6 +315,7 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         async with svc.mtproto_lock:
             sent = await svc.client.send_code_request(phone)
     except FloodWaitError as exc:
+        svc.tasks.set_global_cooldown(exc.seconds)
         await message.answer(
             f"Telegram asks you to wait {exc.seconds} seconds before requesting another login code."
         )
@@ -353,6 +354,7 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         await message.answer("Two-step verification is enabled. Send your 2FA password.")
         return
     except FloodWaitError as exc:
+        svc.tasks.set_global_cooldown(exc.seconds)
         await message.answer(
             f"Telegram asks you to wait {exc.seconds} seconds before retrying this login step."
         )
@@ -377,6 +379,7 @@ async def auth_password(message: Message, state: FSMContext) -> None:
         async with svc.mtproto_lock:
             await svc.client.sign_in(password=password)
     except FloodWaitError as exc:
+        svc.tasks.set_global_cooldown(exc.seconds)
         await message.answer(
             f"Telegram asks you to wait {exc.seconds} seconds before retrying 2FA."
         )
