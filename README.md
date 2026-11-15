@@ -45,7 +45,7 @@ chmod 755 /data/media/downloads /data/media/downloads/complete /data/media/downl
 chmod 755 /data/media/downloads/complete/qbittorrent /data/media/downloads/incomplete/qbittorrent
 ```
 
-The container mounts the downloads root once so incomplete-to-complete promotion stays on one mount and can use an atomic rename. It runs as UID 1001; the qBittorrent directories remain owned by UID 1000 and are not writable by this service. The application itself only writes under the two Telegram subdirectories. `MAX_CONCURRENT_DOWNLOADS` must remain `1`; the setting is validated at startup.
+The container mounts the downloads root once so incomplete-to-complete promotion stays on one mount and can use an atomic rename. It runs as UID 1001; the qBittorrent directories remain owned by UID 1000 and are not writable by this service. The application itself only writes under the two Telegram subdirectories. Telegram download directories are mode `755`, completed media files are mode `644` for read access by Jellyfin/other containers, and in-progress partial files remain private until promotion. The application state directory is mode `700`; the process umask keeps the Telethon session and SQLite state files private. `MAX_CONCURRENT_DOWNLOADS` must remain `1`; the setting is validated at startup.
 
 Configure secrets:
 
