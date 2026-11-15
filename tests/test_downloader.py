@@ -441,6 +441,41 @@ async def test_file_reference_refresh_rejects_replaced_media(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_refreshed_message_that_becomes_protected_is_rejected(tmp_path: Path):
+    message = make_message()
+    refreshed = make_message()
+    refreshed.noforwards = True
+
+    class FileReferenceExpiredError(Exception):
+        pass
+
+    class NewlyProtectedClient:
+        def __init__(self):
+            self.download_calls = 0
+
+        async def get_messages(self, entity, ids):
+            return refreshed
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.download_calls += 1
+            if self.download_calls == 1:
+                yield b"x" * 4096
+                raise FileReferenceExpiredError("stale file reference")
+            yield b"y" * 4096
+
+    client = NewlyProtectedClient()
+    downloader = MediaDownloader(
+        client, tmp_path / "complete", tmp_path / "incomplete",
+        max_network_retries=1, retry_base_delay=0.001,
+    )
+
+    with pytest.raises(DownloadError, match="protected"):
+        await downloader._download_one(message, entity=object())
+
+    assert client.download_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_media_without_stable_telegram_id_is_rejected(tmp_path: Path):
     message = make_message()
     message.document.id = None

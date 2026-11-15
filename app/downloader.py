@@ -344,6 +344,10 @@ class MediaDownloader:
                             "Telegram file reference expired and the source message could not "
                             "be refreshed. Check source access and submit the link again."
                         ) from exc
+                    if getattr(refreshed, "noforwards", False):
+                        raise DownloadError(
+                            "This Telegram message is protected from forwarding/downloading."
+                        ) from exc
                     if media_identity(refreshed) != identity:
                         raise DownloadError(
                             "Telegram media changed while refreshing its file reference; "
