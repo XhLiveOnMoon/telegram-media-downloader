@@ -154,7 +154,6 @@ def test_failed_task_and_recent_limit(tmp_path: Path):
     assert records[0].status == "queued"
 
 
-
 def test_only_worker_claimed_tasks_can_complete(tmp_path: Path):
     store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
     task_id = store.enqueue("message-link", "https://t.me/example/222")
@@ -174,7 +173,6 @@ def test_queued_task_can_be_cancelled_without_claiming(tmp_path: Path):
     assert store.cancel(task_id) is False
     [task] = store.recent()
     assert task.status == "cancelled"
-
 
 
 def test_failed_task_can_be_requeued_once(tmp_path: Path):
