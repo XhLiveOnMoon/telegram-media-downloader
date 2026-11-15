@@ -97,6 +97,16 @@ class BotService:
         except FloodWaitError as exc:
             self.note_flood_wait(exc.seconds)
             raise
+        except Exception as exc:
+            if type(exc).__name__ in {
+                "AuthKeyUnregisteredError",
+                "AuthKeyDuplicatedError",
+                "SessionRevokedError",
+                "UserDeactivatedError",
+                "UnauthorizedError",
+            }:
+                return False
+            raise
 
     def start_worker(self, bot: Bot) -> asyncio.Task:
         if self.worker_task is not None:
