@@ -26,7 +26,7 @@ def make_message(size: int = 8192):
         peer_id=PeerChannel(123456),
         media=object(),
         photo=None,
-        document=SimpleNamespace(size=size, attributes=[]),
+        document=SimpleNamespace(size=size, attributes=[SimpleNamespace(file_name="asset.bin")]),
     )
 
 
