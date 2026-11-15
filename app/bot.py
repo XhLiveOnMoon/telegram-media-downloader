@@ -157,6 +157,7 @@ class BotService:
                     )
                 with partial.open("rb+") as stream:
                     os.fsync(stream.fileno())
+                os.chmod(partial, 0o644)
                 os.replace(partial, final)
                 self._sync_directory(final.parent)
                 await self._notify(bot, f"直传任务 #{task.task_id} 完成：\n{final.name}")
