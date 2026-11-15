@@ -5,3 +5,10 @@ __pycache__
 .pytest_cache
 .ruff_cache
 tests
+
+data/
+*.session
+*.session-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

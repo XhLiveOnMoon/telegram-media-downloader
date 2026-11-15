@@ -234,3 +234,44 @@ async def test_direct_media_promotion_syncs_both_directories(tmp_path: Path):
     assert settings.complete_dir in synced
     assert settings.incomplete_dir in synced
 
+
+
+@pytest.mark.asyncio
+async def test_authorized_session_recovers_auth_required_tasks(tmp_path: Path):
+    class AuthorizedClient:
+        async def is_user_authorized(self):
+            return True
+
+    service = BotService(make_settings(tmp_path), AuthorizedClient())
+    task_id = service.tasks.enqueue("message-link", "https://t.me/example/123")
+    task = service.tasks.claim_next()
+    service.tasks.require_auth(task.task_id, "Authorization required")
+
+    authorized, resumed = await service.reconcile_authorization()
+
+    [stored] = service.tasks.recent()
+    assert task_id == stored.task_id
+    assert authorized is True
+    assert resumed == 1
+    assert stored.status == "queued"
+    assert stored.attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_session_keeps_auth_required_tasks_paused(tmp_path: Path):
+    class UnauthorizedClient:
+        async def is_user_authorized(self):
+            return False
+
+    service = BotService(make_settings(tmp_path), UnauthorizedClient())
+    service.tasks.enqueue("message-link", "https://t.me/example/123")
+    task = service.tasks.claim_next()
+    service.tasks.require_auth(task.task_id, "Authorization required")
+
+    authorized, resumed = await service.reconcile_authorization()
+
+    [stored] = service.tasks.recent()
+    assert authorized is False
+    assert resumed == 0
+    assert stored.status == "auth_required"
+

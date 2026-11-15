@@ -109,6 +109,13 @@ class BotService:
                 return False
             raise
 
+
+    async def reconcile_authorization(self) -> tuple[bool, int]:
+        """Requeue auth-blocked tasks if the persisted Telegram session is valid."""
+        authorized = await self.is_authorized()
+        resumed = self.tasks.resume_auth_required() if authorized else 0
+        return authorized, resumed
+
     def start_worker(self, bot: Bot) -> asyncio.Task:
         if self.worker_task is not None:
             raise RuntimeError("Download worker has already been started")

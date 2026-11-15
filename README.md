@@ -128,7 +128,7 @@ pytest -q
 python -m compileall -q app
 ```
 
-GitHub Actions is configured for manual execution from the repository Actions tab (`workflow_dispatch`); it runs lint, unit tests, Python bytecode compilation, Compose validation, and image build.
+GitHub Actions runs automatically for pull requests and can also be started manually from the repository Actions tab (`workflow_dispatch`). It runs lint, unit tests, Python bytecode compilation, Compose validation, and image build.
 
 ## Current limitations
 
