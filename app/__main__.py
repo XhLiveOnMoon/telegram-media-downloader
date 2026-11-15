@@ -54,14 +54,21 @@ async def monitor_authorization(bot: Bot, owner_id: int) -> None:
             # AuthKeyNotFound is ambiguous: Telegram documents it as potentially
             # temporary or permanent. Warn once, but never erase the session automatically.
             if type(exc).__name__ == "AuthKeyNotFound" and not auth_key_warning_sent:
-                await bot.send_message(
-                    owner_id,
-                    "Telegram 暂时无法识别当前 MTProto Session。这可能是临时服务器问题；"
-                    "请稍后重试。如果持续出现，请按项目 README 的 "
-                    "“Recovering an unrecognized Telethon session” 步骤备份并重建 Session。"
-                    "服务不会自动删除或覆盖旧 Session。",
-                )
-                auth_key_warning_sent = True
+                try:
+                    await bot.send_message(
+                        owner_id,
+                        "Telegram 暂时无法识别当前 MTProto Session。这可能是临时服务器问题；"
+                        "请稍后重试。如果持续出现，请按项目 README 的 "
+                        "“Recovering an unrecognized Telethon session” 步骤备份并重建 Session。"
+                        "服务不会自动删除或覆盖旧 Session。",
+                    )
+                except Exception as notify_exc:
+                    logging.getLogger(__name__).warning(
+                        "Could not send session recovery notice: %s",
+                        type(notify_exc).__name__,
+                    )
+                else:
+                    auth_key_warning_sent = True
             # A transient RPC/network failure is not proof that authorization expired.
             logging.getLogger(__name__).warning(
                 "Authorization monitor check failed: %s", type(exc).__name__

@@ -134,8 +134,10 @@ Run these commands from the project directory. They create a private backup, sto
 set -Eeuo pipefail
 umask 077
 backup="$HOME/telegram-media-downloader-before-session-reset-$(date +%F-%H%M%S).tar.gz"
-tar -czf "$backup" .env data
+# Keep the service stopped while copying SQLite session state; restart on failure.
+trap 'docker compose start' EXIT
 docker compose stop
+tar -czf "$backup" .env data
 stamp=$(date +%F-%H%M%S)
 for suffix in "" "-journal" "-wal" "-shm"; do
   file="data/telegram_user.session${suffix}"
@@ -144,6 +146,7 @@ for suffix in "" "-journal" "-wal" "-shm"; do
   fi
 done
 docker compose up -d
+trap - EXIT
 ```
 
 Then send `/auth` to the Bot and complete login. Keep the backup and renamed session files private; they contain account authorization material. Do not run this procedure while the service is running.
