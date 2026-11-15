@@ -14,7 +14,7 @@ A private, manually triggered Telegram media downloader. A Telegram Bot provides
 - Expired Telegram file references are refreshed from the original message before resuming. Authorization failures pause the task instead of consuming network retries; successful reauthorization triggers recovery.
 - Completed files are atomically moved into the complete directory.
 - Persistent Telethon session stored in the data volume.
-- SQLite task history uses WAL mode and full synchronous commits on the SSD-backed application volume. Message-link tasks interrupted by a process/container restart are replayed automatically after Telegram authorization is available.
+- SQLite stores a durable FIFO queue, retry schedules, authorization pauses, and a global Telegram cooldown using WAL mode and full synchronous commits on the SSD-backed application volume. All download sources use one worker; only one task is active at a time. Interrupted work is recovered after restart.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ chmod 755 /data/media/downloads /data/media/downloads/complete /data/media/downl
 chmod 755 /data/media/downloads/complete/qbittorrent /data/media/downloads/incomplete/qbittorrent
 ```
 
-The container mounts the downloads root once so incomplete-to-complete promotion stays on one mount and can use an atomic rename. It runs as UID 1001; the qBittorrent directories remain owned by UID 1000 and are not writable by this service. The application itself only writes under the two Telegram subdirectories.
+The container mounts the downloads root once so incomplete-to-complete promotion stays on one mount and can use an atomic rename. It runs as UID 1001; the qBittorrent directories remain owned by UID 1000 and are not writable by this service. The application itself only writes under the two Telegram subdirectories. `MAX_CONCURRENT_DOWNLOADS` must remain `1`; the setting is validated at startup.
 
 Configure secrets:
 
@@ -76,7 +76,7 @@ Open a private chat with the Bot and send `/start` once so it can send you statu
 - `/auth` — start or renew the user-account authorization flow.
 - `/download <message-link>` — download media from a Telegram message.
 - `/status` — show Bot, account authorization, and active download status.
-- `/tasks` — show the latest 10 download tasks, including completed, failed, and interrupted tasks.
+- `/tasks` — show the latest 10 download tasks and their queue/retry/auth/completion states.
 - `/cancel` — cancel the current authorization conversation.
 - Send or forward a media file directly to the Bot for a small-file download.
 
@@ -119,6 +119,8 @@ GitHub Actions runs lint, unit tests, and Python bytecode compilation on pushes 
 ## Current limitations
 
 - Directly sent or forwarded media uses the standard Bot API download endpoint and is limited to 20 MB. For larger files, send the original message link with `/download` so Telethon downloads it through your authorized account.
-- Link-based downloads automatically retry transient network interruptions and short transfers up to five times with exponential backoff. Partial data is flushed to disk before retry. If all retries are exhausted, the task is marked failed but its partial file is retained; resend the same link to continue. Message-link tasks interrupted by a restart are automatically replayed from the persisted task ledger after the MTProto account is authorized. Direct Bot API media tasks cannot currently be replayed after restart because Bot API file identifiers are not persisted.
-- Downloads are serialized by default (`MAX_CONCURRENT_DOWNLOADS=1`) to keep session and disk behavior predictable. Per-message file locks prevent two requests for the same source from writing the same partial file concurrently.
+- Link-based downloads preserve partial data and retry through the persistent worker schedule. If all worker attempts are exhausted, the task is marked failed and its partial file is retained; submit the same link again to continue. Both link and direct-media tasks are recorded in the queue; direct-media retries start from zero because the Bot API does not provide an offset-resume API.
+- All link-based and direct Bot API downloads pass through one persistent FIFO worker. One task is active at a time and each MTProto download uses one sequential asynchronous stream (512 KiB request chunks); there is no multi-threaded per-file download. `MAX_CONCURRENT_DOWNLOADS` is intentionally fixed at 1.
+- Telegram FloodWait responses pause the entire worker for at least the server-specified duration. The cooldown and task retry deadline are persisted in SQLite, so a container restart cannot bypass the wait. Transient network failures are retried by the worker using persistent exponential backoff.
+- Direct Bot API tasks persist their file identifier and can be replayed after a restart, but the Bot API download endpoint does not expose byte-offset resume; a retried direct-media transfer starts again from byte zero. Link-based Telethon downloads retain their partial files and resume from an aligned offset.
 - Authorization prompts are private-chat only. Use `/cancel` to abandon an in-progress login.
