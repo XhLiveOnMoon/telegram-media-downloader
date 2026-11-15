@@ -9,7 +9,7 @@ COPY pyproject.toml ./
 COPY app ./app
 RUN pip install --no-cache-dir .
 
-RUN useradd --create-home --uid 10001 appuser \
+RUN useradd --create-home --uid 1001 appuser \
     && mkdir -p /app/data /downloads/complete /downloads/incomplete \
     && chown -R appuser:appuser /app /downloads
 USER appuser
