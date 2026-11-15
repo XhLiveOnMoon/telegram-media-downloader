@@ -185,3 +185,36 @@ async def test_worker_stops_retrying_after_configured_attempt_limit(tmp_path):
     assert task.task_id == task_id
     assert task.status == "failed"
     assert "retry limit" in task.detail.lower()
+
+
+
+@pytest.mark.asyncio
+async def test_link_and_direct_media_tasks_share_one_serial_worker(tmp_path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    first_id = store.enqueue("message-link", "https://t.me/example/1")
+    second_id = store.enqueue("direct-media", '{"file_id":"opaque"}')
+    active = 0
+    peak_active = 0
+    handled = []
+
+    async def handler(task):
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        handled.append(task.task_id)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return "done"
+
+    worker = DownloadWorker(store, handler, poll_interval=0.01)
+    run = asyncio.create_task(worker.run())
+    for _ in range(100):
+        records = store.recent(limit=2)
+        if all(record.status == "completed" for record in records):
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    assert handled == [first_id, second_id]
+    assert peak_active == 1
