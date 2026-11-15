@@ -20,12 +20,15 @@ class DownloadTask:
 
 
 class DownloadTaskStore:
-    """Small SQLite-backed task ledger that survives container restarts."""
+    """Durable SQLite task ledger stored on the SSD-backed application volume."""
 
     def __init__(self, database: Path) -> None:
         self.database = database
         self.database.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            # WAL improves reader/writer concurrency; FULL asks SQLite to sync commits.
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=FULL")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS download_tasks (
@@ -54,9 +57,11 @@ class DownloadTaskStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.database, timeout=10)
+        connection = sqlite3.connect(self.database, timeout=30)
         connection.row_factory = sqlite3.Row
         try:
+            connection.execute("PRAGMA busy_timeout=30000")
+            connection.execute("PRAGMA synchronous=FULL")
             yield connection
             connection.commit()
         except Exception:
@@ -91,6 +96,25 @@ class DownloadTaskStore:
             connection.execute(
                 "UPDATE download_tasks SET status = ?, detail = ?, updated_at = ? WHERE id = ?",
                 (status, detail[:1000], self._now(), task_id),
+            )
+
+    def interrupted(self, limit: int = 50) -> list[DownloadTask]:
+        """Return restart-interrupted tasks oldest first for deterministic recovery."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id AS task_id, task_type, source, status, detail, created_at, updated_at "
+                "FROM download_tasks WHERE status = 'interrupted' ORDER BY id ASC LIMIT ?",
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        return [DownloadTask(**dict(row)) for row in rows]
+
+    def mark_running(self, task_id: int) -> None:
+        """Mark a recovered task as running before attempting its replay."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE download_tasks SET status = 'running', detail = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'interrupted'",
+                ("Automatically resumed after service restart", self._now(), task_id),
             )
 
     def recent(self, limit: int = 10) -> list[DownloadTask]:
