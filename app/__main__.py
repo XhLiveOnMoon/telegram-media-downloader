@@ -36,6 +36,11 @@ async def monitor_authorization(bot: Bot, owner_id: int) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            retry_after = getattr(exc, "retry_after", None)
+            if retry_after is not None:
+                seconds = getattr(retry_after, "total_seconds", None)
+                delay = seconds() if callable(seconds) else float(retry_after)
+                get_service().note_flood_wait(delay)
             # A transient RPC/network failure is not proof that authorization expired.
             logging.getLogger(__name__).warning(
                 "Authorization monitor check failed: %s", type(exc).__name__
