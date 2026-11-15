@@ -498,6 +498,34 @@ async def test_authorization_probe_recognizes_expired_auth_key(tmp_path: Path, e
 
 
 @pytest.mark.asyncio
+async def test_message_link_progress_storage_failure_is_deferred(tmp_path: Path):
+    from app.worker import StorageUnavailable
+
+    service = BotService(make_settings(tmp_path), client=object())
+    task_id = service.tasks.enqueue("message-link", "https://t.me/example_channel/123")
+    task = service.tasks.claim_next()
+
+    def unavailable_progress(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    service.tasks.update_progress = unavailable_progress
+
+    class ProgressReportingDownloader:
+        async def download(self, link, progress_callback=None):
+            progress_callback(4096, 8192, "asset.bin")
+            return []
+
+    service.downloader = ProgressReportingDownloader()
+
+    with pytest.raises(StorageUnavailable, match="database is temporarily unavailable"):
+        await service.execute_task(task, FakeBot(b""))
+
+    [stored] = service.tasks.recent()
+    assert stored.task_id == task_id
+    assert stored.status == "downloading"
+
+
+@pytest.mark.asyncio
 async def test_direct_media_sqlite_failure_is_deferred_before_download(tmp_path: Path):
     import sqlite3
 
