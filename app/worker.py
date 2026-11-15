@@ -96,21 +96,6 @@ class DownloadWorker:
                 self.active_task_id = None
                 self.operation_task = None
                 logger.exception("Download scheduler loop failed; retrying safely")
-                if self.pending_cancel_task_id is not None:
-                    try:
-                        cancelled_id = self.pending_cancel_task_id
-                        if not self.store.cancel_active(cancelled_id):
-                            self.store.cancel(cancelled_id)
-                        self.pending_cancel_task_id = None
-                        self.cancel_requested = False
-                        continue
-                    except Exception:
-                        logger.exception(
-                            "Could not persist cancellation for task %s",
-                            self.pending_cancel_task_id,
-                        )
-                        await asyncio.sleep(5)
-                        continue
                 if self.needs_orphan_recovery:
                     try:
                         recovered = self.store.recover_orphaned_downloads()
@@ -126,6 +111,13 @@ class DownloadWorker:
                 await asyncio.sleep(5)
 
     async def _run_once(self) -> None:
+        if self.pending_cancel_task_id is not None:
+            cancelled_id = self.pending_cancel_task_id
+            if not self.store.cancel_active(cancelled_id):
+                self.store.cancel(cancelled_id)
+            self.pending_cancel_task_id = None
+            self.cancel_requested = False
+
         cooldown = max(
             self.store.cooldown_remaining(),
             self.local_cooldown_until - time.time(),
