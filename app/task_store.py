@@ -33,9 +33,9 @@ class DownloadTaskStore:
     def __init__(self, database: Path) -> None:
         self.database = database
         self.database.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.database, timeout=30) as bootstrap:
+            bootstrap.execute("PRAGMA journal_mode=WAL")
         with self._connect() as connection:
-            connection.execute("PRAGMA journal_mode=WAL")
-            connection.execute("PRAGMA synchronous=FULL")
             self._migrate(connection)
             connection.execute(
                 "UPDATE download_tasks SET status='interrupted', "
