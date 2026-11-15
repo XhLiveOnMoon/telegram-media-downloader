@@ -92,6 +92,7 @@ class DownloadWorker:
                 )
             except Exception:
                 logger.exception("Could not persist shutdown state for task %s", task.task_id)
+            self.active_task_id = None
             raise
         except FloodWait as exc:
             until = self.store.set_global_cooldown(exc.seconds)
@@ -133,5 +134,4 @@ class DownloadWorker:
             self.store.fail(task.task_id, f"Internal error: {type(exc).__name__}")
         else:
             self.store.complete(task.task_id, detail or "Completed")
-        finally:
-            self.active_task_id = None
+        self.active_task_id = None
