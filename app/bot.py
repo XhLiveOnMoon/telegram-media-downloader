@@ -708,10 +708,9 @@ async def auth_password(message: Message, state: FSMContext) -> None:
             )
             return
         await message.answer("2FA verification failed. Run /auth to start again.")
-        svc.pending_phone = svc.pending_code_hash = None
-        await state.clear()
+        await svc.clear_auth_flow(state, generation)
         return
-    await _authorization_succeeded(message, state, svc)
+    await _authorization_succeeded(message, state, svc, generation)
 
 
 @router.message(F.chat.type == "private", Command("cancel"))
