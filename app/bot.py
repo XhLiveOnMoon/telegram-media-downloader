@@ -121,6 +121,8 @@ class BotService:
         except Exception as exc:
             if type(exc).__name__ in {
                 "AuthKeyUnregisteredError",
+                "AuthKeyInvalidError",
+                "SessionExpiredError",
                 "AuthKeyDuplicatedError",
                 "SessionRevokedError",
                 "UserDeactivatedError",

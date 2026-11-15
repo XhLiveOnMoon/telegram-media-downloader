@@ -476,3 +476,18 @@ async def test_direct_media_rejects_path_components_from_persisted_payload(
     [stored] = service.tasks.recent()
     assert stored.task_id == task_id
     assert stored.status == "downloading"
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_name", ["AuthKeyInvalidError", "SessionExpiredError"])
+async def test_authorization_probe_recognizes_expired_auth_key(tmp_path: Path, error_name):
+    error_type = type(error_name, (Exception,), {})
+
+    class ExpiredClient:
+        async def is_user_authorized(self):
+            raise error_type("authorization expired")
+
+    service = BotService(make_settings(tmp_path), ExpiredClient())
+
+    assert await service.is_authorized() is False

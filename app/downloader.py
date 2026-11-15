@@ -21,6 +21,7 @@ ProgressCallback = Callable[[int, int | None, str], None]
 _TRANSIENT_ERROR_NAMES = {
     "ClientError", "ClientConnectionError", "ClientConnectorError", "ClientOSError",
     "ClientPayloadError", "ConnectionNotInitedError", "InterdcCallError", "RpcCallFailError",
+    "AuthKeyNotFound",
     "ServerDisconnectedError", "ServerError", "ServerTimeoutError", "TelegramNetworkError",
     "TelegramServerError", "TimedOutError",
 }
@@ -66,6 +67,8 @@ class TransientDownloadError(DownloadError):
 
 _AUTH_ERROR_NAMES = {
     "AuthKeyUnregisteredError",
+    "AuthKeyInvalidError",
+    "SessionExpiredError",
     "AuthKeyDuplicatedError",
     "SessionRevokedError",
     "UserDeactivatedError",

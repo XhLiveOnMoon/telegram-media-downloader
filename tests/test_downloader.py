@@ -460,3 +460,48 @@ def test_safe_filename_respects_utf8_filesystem_component_limit():
     filename = safe_filename("界" * 100)
 
     assert len(filename.encode("utf-8")) <= 180
+
+
+
+@pytest.mark.asyncio
+async def test_auth_key_not_found_is_retried_as_ambiguous_transport_failure(tmp_path: Path):
+    message = make_message()
+
+    class AuthKeyNotFound(Exception):
+        pass
+
+    class ClientWithUnknownAuthKey:
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            raise AuthKeyNotFound("server temporarily forgot the key")
+            yield b""
+
+    from app.downloader import TransientDownloadError
+
+    downloader = MediaDownloader(
+        ClientWithUnknownAuthKey(),
+        tmp_path / "complete",
+        tmp_path / "incomplete",
+        max_network_retries=0,
+    )
+    with pytest.raises(TransientDownloadError, match="AuthKeyNotFound"):
+        await downloader._download_one(message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_name", ["AuthKeyInvalidError", "SessionExpiredError"])
+async def test_invalid_or_expired_auth_key_requires_reauthorization(tmp_path: Path, error_name):
+    message = make_message()
+    error_type = type(error_name, (Exception,), {})
+
+    class UnauthorizedClient:
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            raise error_type("authorization expired")
+            yield b""
+
+    from app.downloader import AuthorizationRequiredError
+
+    downloader = MediaDownloader(
+        UnauthorizedClient(), tmp_path / "complete", tmp_path / "incomplete"
+    )
+    with pytest.raises(AuthorizationRequiredError):
+        await downloader._download_one(message)
