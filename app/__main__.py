@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 
 from aiogram import Bot
@@ -48,6 +49,13 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = (settings.data_dir / "service.lock").open("a+")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        lock_file.close()
+        raise RuntimeError("Another Telegram Media Downloader instance is already running.") from exc
+
     client = TelegramClient(
         str(settings.data_dir / "telegram_user"), settings.api_id, settings.api_hash
     )
@@ -69,6 +77,8 @@ async def main() -> None:
             await asyncio.gather(monitor_task, return_exceptions=True)
         await bot.session.close()
         await client.disconnect()
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
 
 
 if __name__ == "__main__":
