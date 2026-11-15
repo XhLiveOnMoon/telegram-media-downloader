@@ -366,7 +366,6 @@ def test_interruption_does_not_consume_retry_budget(tmp_path: Path):
     assert task.attempts == 0
 
 
-
 def test_enqueue_deduplicates_nonterminal_tasks_atomically(tmp_path: Path):
     database = tmp_path / "tasks.sqlite3"
     first_store = DownloadTaskStore(database)
@@ -418,7 +417,6 @@ def test_floodwait_deferral_and_global_cooldown_are_atomic(tmp_path: Path):
     restarted = DownloadTaskStore(database)
     assert restarted.cooldown_remaining(now=1050) == 70
     assert restarted.claim_next(now=1050) is None
-
 
 
 def test_enqueue_with_status_reports_reused_and_created_tasks(tmp_path: Path):

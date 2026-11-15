@@ -559,9 +559,10 @@ async def test_direct_media_sqlite_failure_is_deferred_before_download(tmp_path:
     assert stored.status == "downloading"
 
 
-
 @pytest.mark.asyncio
-async def test_auth_start_reports_temporary_authorization_check_failure(tmp_path: Path, monkeypatch):
+async def test_auth_start_reports_temporary_authorization_check_failure(
+    tmp_path: Path, monkeypatch
+):
     from app.bot import auth_start
 
     class UnavailableService:

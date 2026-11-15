@@ -528,8 +528,6 @@ async def test_progress_storage_failure_aborts_download_and_keeps_partial(tmp_pa
     assert not list((tmp_path / "complete").glob("*"))
 
 
-
-
 @pytest.mark.asyncio
 async def test_transient_error_message_is_not_exposed_to_user(tmp_path: Path):
     secret = "opaque-session-or-request-secret"
