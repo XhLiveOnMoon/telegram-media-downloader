@@ -55,6 +55,7 @@ class BotService:
             client, settings.complete_dir, settings.incomplete_dir, max_concurrent_downloads=1
         )
         self.tasks = DownloadTaskStore(settings.data_dir / "downloads.sqlite3")
+        self.mtproto_lock = asyncio.Lock()
         self.worker: DownloadWorker | None = None
         self.worker_task: asyncio.Task | None = None
         self.pending_phone: str | None = None
@@ -67,6 +68,14 @@ class BotService:
     def is_owner(self, message: Message) -> bool:
         return bool(message.from_user and message.from_user.id == self.settings.owner_telegram_id)
 
+    async def is_authorized(self) -> bool:
+        try:
+            async with self.mtproto_lock:
+                return await self.client.is_user_authorized()
+        except FloodWaitError as exc:
+            self.tasks.set_global_cooldown(exc.seconds)
+            raise
+
     def start_worker(self, bot: Bot) -> asyncio.Task:
         if self.worker_task is not None:
             raise RuntimeError("Download worker has already been started")
@@ -78,7 +87,8 @@ class BotService:
         try:
             if task.task_type == "message-link":
                 link = parse_message_link(task.source)
-                paths = await self.downloader.download(link)
+                async with self.mtproto_lock:
+                    paths = await self.downloader.download(link)
                 detail = ", ".join(path.name for path in paths)
                 await self._notify(
                     bot, f"下载任务 #{task.task_id} 完成（{len(paths)} 个文件）：\n{detail}"
@@ -218,7 +228,7 @@ async def status(message: Message) -> None:
     if not svc.is_owner(message):
         return
     try:
-        authorized = await svc.client.is_user_authorized()
+        authorized = await svc.is_authorized()
         state = "authorized" if authorized else "authorization required"
     except Exception as exc:
         state = f"temporarily unavailable ({type(exc).__name__})"
@@ -255,7 +265,7 @@ async def auth_start(message: Message, state: FSMContext) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    if await svc.client.is_user_authorized():
+    if await svc.is_authorized():
         await message.answer("Telegram account is already authorized.")
         return
     await state.set_state(AuthFlow.phone)
@@ -302,7 +312,8 @@ async def auth_phone(message: Message, state: FSMContext) -> None:
         await message.answer("Invalid phone number. Use international format, e.g. +1234567890.")
         return
     try:
-        sent = await svc.client.send_code_request(phone)
+        async with svc.mtproto_lock:
+            sent = await svc.client.send_code_request(phone)
     except FloodWaitError as exc:
         await message.answer(
             f"Telegram asks you to wait {exc.seconds} seconds before requesting another login code."
@@ -331,11 +342,12 @@ async def auth_code(message: Message, state: FSMContext) -> None:
         await state.clear()
         return
     try:
-        await svc.client.sign_in(
-            phone=svc.pending_phone,
-            code=code,
-            phone_code_hash=svc.pending_code_hash,
-        )
+        async with svc.mtproto_lock:
+            await svc.client.sign_in(
+                phone=svc.pending_phone,
+                code=code,
+                phone_code_hash=svc.pending_code_hash,
+            )
     except SessionPasswordNeededError:
         await state.set_state(AuthFlow.password)
         await message.answer("Two-step verification is enabled. Send your 2FA password.")
@@ -362,7 +374,8 @@ async def auth_password(message: Message, state: FSMContext) -> None:
     password = (message.text or "").strip()
     await _delete_sensitive_message(message)
     try:
-        await svc.client.sign_in(password=password)
+        async with svc.mtproto_lock:
+            await svc.client.sign_in(password=password)
     except FloodWaitError as exc:
         await message.answer(
             f"Telegram asks you to wait {exc.seconds} seconds before retrying 2FA."
