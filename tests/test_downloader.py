@@ -5,7 +5,7 @@ import pytest
 from telethon.tl.types import PeerChannel
 from telethon.utils import get_peer_id
 
-from app.downloader import DownloadError, MediaDownloader
+from app.downloader import DownloadError, MediaDownloader, TransientDownloadError
 from app.storage import stable_partial_path
 
 
@@ -177,3 +177,74 @@ async def test_auth_expiration_is_not_retried_as_network_error(tmp_path: Path):
         await downloader._download_one(message)
 
     assert client.calls == 1
+
+
+
+@pytest.mark.asyncio
+async def test_transient_entity_lookup_failure_is_deferred_to_worker(tmp_path: Path):
+    class DisconnectedClient:
+        async def get_entity(self, username):
+            raise ConnectionError("network is temporarily unavailable")
+
+    downloader = MediaDownloader(
+        DisconnectedClient(), tmp_path / "complete", tmp_path / "incomplete"
+    )
+    from app.links import MessageLink
+
+    with pytest.raises(TransientDownloadError, match="resolving the source message"):
+        await downloader.download(MessageLink(kind="public", username="example", message_id=1))
+
+
+@pytest.mark.asyncio
+async def test_local_disk_full_is_not_retried_as_network_failure(tmp_path: Path):
+    import errno
+
+    message = make_message()
+
+    class FullDiskClient:
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            raise OSError(errno.ENOSPC, "No space left on device")
+            yield b""
+
+    downloader = MediaDownloader(
+        FullDiskClient(), tmp_path / "complete", tmp_path / "incomplete",
+        max_network_retries=5, retry_base_delay=0.001,
+    )
+
+    with pytest.raises(DownloadError, match="Local storage I/O failed"):
+        await downloader._download_one(message)
+
+
+@pytest.mark.asyncio
+async def test_file_reference_refresh_does_not_consume_network_retry_budget(tmp_path: Path):
+    message = make_message()
+
+    class FileReferenceExpiredError(Exception):
+        pass
+
+    class MixedFailureClient:
+        def __init__(self):
+            self.calls = 0
+            self.refreshed = make_message()
+
+        async def get_messages(self, entity, ids):
+            return self.refreshed
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConnectionError("temporary disconnect")
+            if self.calls == 2:
+                raise FileReferenceExpiredError("stale reference")
+            yield b"z" * 8192
+
+    client = MixedFailureClient()
+    downloader = MediaDownloader(
+        client, tmp_path / "complete", tmp_path / "incomplete",
+        max_network_retries=1, retry_base_delay=0.001,
+    )
+
+    result = await downloader._download_one(message)
+
+    assert client.calls == 3
+    assert result.read_bytes() == b"z" * 8192
