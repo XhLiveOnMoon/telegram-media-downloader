@@ -434,3 +434,26 @@ async def test_worker_does_not_log_unclassified_exception_message(tmp_path, capl
     assert task.task_id == task_id
     assert task.status == "failed"
     assert task.detail == "Internal error: RuntimeError"
+
+
+
+@pytest.mark.asyncio
+async def test_storage_unavailable_defers_task_without_consuming_attempts(tmp_path):
+    from app.worker import StorageUnavailable
+
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.enqueue("message-link", "https://t.me/example/6544")
+
+    async def handler(task):
+        raise StorageUnavailable("Local task database is temporarily unavailable.")
+
+    worker = DownloadWorker(
+        store, handler, poll_interval=0.01, max_attempts=1, retry_base_delay=0.1
+    )
+    await worker._run_once()
+
+    [task] = store.recent()
+    assert task.task_id == task_id
+    assert task.status == "retry_wait"
+    assert task.attempts == 0
+    assert task.next_attempt_at is not None

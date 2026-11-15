@@ -22,6 +22,10 @@ class PermanentTaskError(RuntimeError):
     """A task has invalid or unsupported data and must not be retried."""
 
 
+class StorageUnavailable(RuntimeError):
+    """Local durable task storage is temporarily unavailable."""
+
+
 class FloodWait(RuntimeError):
     """Telegram explicitly instructed the client to wait before another request."""
 
@@ -198,6 +202,14 @@ class DownloadWorker:
         except PermanentTaskError as exc:
             self.store.fail(task.task_id, str(exc))
             logger.warning("Task %s failed permanently: %s", task.task_id, exc)
+        except StorageUnavailable as exc:
+            self.store.retry_later(
+                task.task_id,
+                str(exc),
+                self.retry_base_delay,
+                preserve_attempts=True,
+            )
+            logger.warning("Task %s deferred because local storage is unavailable", task.task_id)
         except RetryableTaskError as exc:
             if task.attempts >= self.max_attempts:
                 self.store.fail(

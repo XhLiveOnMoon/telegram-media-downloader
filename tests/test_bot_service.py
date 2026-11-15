@@ -491,3 +491,38 @@ async def test_authorization_probe_recognizes_expired_auth_key(tmp_path: Path, e
     service = BotService(make_settings(tmp_path), ExpiredClient())
 
     assert await service.is_authorized() is False
+
+
+
+@pytest.mark.asyncio
+async def test_direct_media_sqlite_failure_is_deferred_before_download(tmp_path: Path):
+    import sqlite3
+
+    from app.worker import StorageUnavailable
+
+    settings = make_settings(tmp_path)
+    service = BotService(settings, client=object())
+    task_id = service.tasks.enqueue(
+        "direct-media",
+        json.dumps({
+            "file_id": "opaque-file-id",
+            "filename": "sample.bin",
+            "file_size": 10,
+            "source_key": "bot-123-654",
+        }),
+    )
+    task = service.tasks.claim_next()
+    bot = FakeBot(b"0123456789")
+
+    def unavailable_progress(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    service.tasks.update_progress = unavailable_progress
+
+    with pytest.raises(StorageUnavailable, match="database is temporarily unavailable"):
+        await service.execute_task(task, bot)
+
+    assert bot.download_calls == 0
+    [stored] = service.tasks.recent()
+    assert stored.task_id == task_id
+    assert stored.status == "downloading"

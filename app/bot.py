@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 from html import escape as html_escape
 
@@ -32,6 +33,7 @@ from .worker import (
     FloodWait,
     PermanentTaskError,
     RetryableTaskError,
+    StorageUnavailable,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,6 +274,10 @@ class BotService:
         except PermanentTaskError as exc:
             await self._notify(bot, f"下载任务 #{task.task_id} 无法执行：{exc}")
             raise
+        except sqlite3.Error as exc:
+            raise StorageUnavailable(
+                "Local task database is temporarily unavailable; the task will be retried."
+            ) from exc
         except RetryableTaskError as exc:
             if self.worker and task.attempts >= self.worker.max_attempts:
                 await self._notify(
