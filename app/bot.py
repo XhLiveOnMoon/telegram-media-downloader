@@ -233,7 +233,7 @@ class BotService:
             if retry_after is not None:
                 seconds = getattr(retry_after, "total_seconds", None)
                 delay = seconds() if callable(seconds) else float(retry_after)
-                self.tasks.set_global_cooldown(delay)
+                self.note_flood_wait(delay)
             # Notification failure must not turn an already-saved file into a failed task.
             logger.warning("Could not send task notification: %s", type(exc).__name__)
 
@@ -276,11 +276,14 @@ async def status(message: Message) -> None:
     svc = get_service()
     if not svc.is_owner(message):
         return
-    try:
-        authorized = await svc.is_authorized()
-        state = "authorized" if authorized else "authorization required"
-    except Exception as exc:
-        state = f"temporarily unavailable ({type(exc).__name__})"
+    if svc.active_downloads:
+        state = "download in progress; authorization check deferred"
+    else:
+        try:
+            authorized = await svc.is_authorized()
+            state = "authorized" if authorized else "authorization required"
+        except Exception as exc:
+            state = f"temporarily unavailable ({type(exc).__name__})"
     cooldown = svc.tasks.cooldown_remaining()
     await message.answer(
         f"Bot: running\nTelegram account: {state}\n"
