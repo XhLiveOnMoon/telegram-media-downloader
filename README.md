@@ -114,6 +114,6 @@ GitHub Actions runs lint, unit tests, and Python bytecode compilation on pushes 
 ## Current limitations
 
 - Directly sent or forwarded media uses the standard Bot API download endpoint and is limited to 20 MB. For larger files, send the original message link with `/download` so Telethon downloads it through your authorized account.
-- Link-based downloads can resume a partial file when the same source message and media are still accessible. The partial file is keyed by source peer and message ID. A SQLite task ledger records outcomes; it does not automatically resume an interrupted job after restart—you can resend the same link to continue its partial file.
+- Link-based downloads automatically retry transient network interruptions up to five times with exponential backoff, preserving the partial file and resuming from the last aligned byte offset. If all retries are exhausted, resend the same link to continue from the retained partial file. A SQLite task ledger records outcomes; interrupted jobs are not automatically restarted after a container/process restart yet.
 - Downloads are serialized by default (`MAX_CONCURRENT_DOWNLOADS=1`) to keep session and disk behavior predictable.
 - Authorization prompts are private-chat only. Use `/cancel` to abandon an in-progress login.
