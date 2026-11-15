@@ -208,14 +208,24 @@ class DownloadTaskStore:
         return DownloadTask(**dict(row))
 
     def enqueue(self, task_type: str, source: str) -> int:
-        """Persist a new task as queued; it is not running until atomically claimed."""
+        """Persist a task, reusing an identical task that is already non-terminal."""
+        normalized_source = source[:4000]
         now = self._now()
         with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT id FROM download_tasks "
+                "WHERE task_type=? AND source=? "
+                "AND status IN ('queued','downloading','retry_wait','interrupted','auth_required') "
+                "ORDER BY id DESC LIMIT 1",
+                (task_type, normalized_source),
+            ).fetchone()
+            if existing is not None:
+                return int(existing["id"])
             cursor = connection.execute(
                 "INSERT INTO download_tasks "
                 "(task_type, source, status, created_at, updated_at) "
                 "VALUES (?, ?, 'queued', ?, ?)",
-                (task_type, source[:4000], now, now),
+                (task_type, normalized_source, now, now),
             )
             return int(cursor.lastrowid)
 

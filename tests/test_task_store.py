@@ -364,3 +364,38 @@ def test_interruption_does_not_consume_retry_budget(tmp_path: Path):
     [task] = store.recent()
     assert task.status == "interrupted"
     assert task.attempts == 0
+
+
+
+def test_enqueue_deduplicates_nonterminal_tasks_atomically(tmp_path: Path):
+    database = tmp_path / "tasks.sqlite3"
+    first_store = DownloadTaskStore(database)
+    second_store = DownloadTaskStore(database)
+    source = "https://t.me/example/123"
+
+    first_id = first_store.enqueue("message-link", source)
+    duplicate_id = second_store.enqueue("message-link", source)
+
+    assert duplicate_id == first_id
+    assert len(first_store.recent()) == 1
+
+    claimed = first_store.claim_next()
+    assert claimed.task_id == first_id
+    active_duplicate_id = second_store.enqueue("message-link", source)
+    assert active_duplicate_id == first_id
+    assert len(first_store.recent()) == 1
+
+
+def test_enqueue_allows_new_task_after_previous_task_is_terminal(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    source = "https://t.me/example/456"
+
+    first_id = store.enqueue("message-link", source)
+    assert store.claim_next().task_id == first_id
+    store.complete(first_id, "asset.bin")
+
+    second_id = store.enqueue("message-link", source)
+
+    assert second_id != first_id
+    records = store.recent(limit=2)
+    assert {record.status for record in records} == {"completed", "queued"}
