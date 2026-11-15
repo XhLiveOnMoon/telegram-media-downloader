@@ -138,7 +138,7 @@ class MediaDownloader:
 
                 actual_size = partial.stat().st_size
                 if size and actual_size != size:
-                    raise DownloadError(
+                    raise ConnectionError(
                         f"Incomplete download ({actual_size}/{size} bytes); retry to resume."
                     )
                 os.replace(partial, final)
@@ -157,7 +157,7 @@ class MediaDownloader:
                     logger.exception("Media download failed for message %s", message.id)
                     raise DownloadError(
                         f"Network/download failed after {attempt + 1} attempts "
-                        f"({type(exc).__name__}). Partial data was kept; resend the same "
+                        f"({type(exc).__name__}: {exc}). Partial data was kept; resend the same "
                         "message link later to resume."
                     ) from exc
                 delay = min(self.retry_base_delay * (2**attempt), 30.0)
