@@ -15,6 +15,7 @@ from .config import Settings
 from .downloader import DownloadError, MediaDownloader
 from .links import parse_message_link
 from .storage import prepare_directories, safe_filename, stable_partial_path
+from .task_store import DownloadTaskStore
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -44,6 +45,7 @@ class BotService:
             settings.max_concurrent_downloads,
         )
         self.active_downloads = 0
+        self.tasks = DownloadTaskStore(settings.data_dir / "downloads.sqlite3")
         self.bot_semaphore = asyncio.Semaphore(settings.max_concurrent_downloads)
         self.pending_phone: str | None = None
         self.pending_code_hash: str | None = None
@@ -86,6 +88,26 @@ async def status(message: Message) -> None:
         f"Bot: running\nTelegram account: {state}\n"
         f"Active downloads: {svc.active_downloads}"
     )
+
+
+
+@router.message(F.chat.type == "private", Command("tasks"))
+async def tasks(message: Message) -> None:
+    svc = get_service()
+    if not svc.is_owner(message):
+        return
+    records = svc.tasks.recent(10)
+    if not records:
+        await message.answer("No download tasks have been recorded yet.")
+        return
+    lines = ["Recent download tasks:"]
+    for record in records:
+        detail = f" — {record.detail}" if record.detail else ""
+        lines.append(
+            f"#{record.task_id} [{record.status}] {record.task_type}: "
+            f"{record.source}{detail}"
+        )
+    await message.answer("\n".join(lines))
 
 
 @router.message(F.chat.type == "private", Command("auth"))
@@ -223,14 +245,25 @@ async def download(message: Message, command: CommandObject) -> None:
     except ValueError as exc:
         await message.answer(str(exc))
         return
-    progress = await message.answer("Download started…")
+    task_id = svc.tasks.create("message-link", command.args)
+    progress = await message.answer(f"Download started (task #{task_id})…")
     svc.active_downloads += 1
     try:
         paths = await svc.downloader.download(link)
         names = "\n".join(f"• {path.name}" for path in paths)
-        await progress.edit_text(f"Download completed ({len(paths)} file(s)):\n{names}")
+        svc.tasks.complete(task_id, ", ".join(path.name for path in paths))
+        await progress.edit_text(
+            f"Download completed ({len(paths)} file(s), task #{task_id}):\n{names}"
+        )
     except DownloadError as exc:
-        await progress.edit_text(f"Download failed: {exc}")
+        svc.tasks.fail(task_id, str(exc))
+        await progress.edit_text(f"Download failed (task #{task_id}): {exc}")
+    except Exception as exc:
+        logger.exception("Unexpected download task failure: %s", task_id)
+        svc.tasks.fail(task_id, type(exc).__name__)
+        await progress.edit_text(
+            f"Download failed (task #{task_id}): unexpected internal error."
+        )
     finally:
         svc.active_downloads -= 1
 
@@ -267,7 +300,8 @@ async def direct_media(message: Message) -> None:
     safe_name = safe_filename(filename)
     partial = stable_partial_path(svc.settings.incomplete_dir, source_key, safe_name)
     final = svc.settings.complete_dir / f"{source_key}-{safe_name}"
-    progress = await message.answer("Direct media download started…")
+    task_id = svc.tasks.create("direct-media", filename)
+    progress = await message.answer(f"Direct media download started (task #{task_id})…")
     async with svc.bot_semaphore:
         svc.active_downloads += 1
         try:
@@ -280,10 +314,14 @@ async def direct_media(message: Message) -> None:
                     )
                 final.parent.mkdir(parents=True, exist_ok=True)
                 partial.replace(final)
-            await progress.edit_text(f"Download completed:\n{final.name}")
+            svc.tasks.complete(task_id, final.name)
+            await progress.edit_text(f"Download completed (task #{task_id}):\n{final.name}")
         except Exception as exc:
             logger.exception("Direct Bot media download failed")
-            await progress.edit_text(f"Direct media download failed: {type(exc).__name__}.")
+            svc.tasks.fail(task_id, type(exc).__name__)
+            await progress.edit_text(
+                f"Direct media download failed (task #{task_id}): {type(exc).__name__}."
+            )
         finally:
             svc.active_downloads -= 1
 
