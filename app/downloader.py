@@ -73,7 +73,9 @@ def _expected_media_size(message) -> int | None:
         size = getattr(document, "size", None)
         if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
             return size
-        raise DownloadError("Telegram document has no valid file size; refusing unchecked download.")
+        raise DownloadError(
+            "Telegram document has no valid file size; refusing unchecked download."
+        )
 
     photo = getattr(message, "photo", None)
     if photo is None:
@@ -85,25 +87,30 @@ def _expected_media_size(message) -> int | None:
     # Telethon 1.x resolves MessageMediaPhoto through photo.sizes[-1] when
     # constructing its InputPhotoFileLocation.
     selected = sizes[-1]
-    size = getattr(selected, "size", None)
-    if size is None:
-        progressive_sizes = getattr(selected, "sizes", None)
-        if progressive_sizes:
-            size = max(progressive_sizes)
-    if size is None and hasattr(selected, "bytes"):
+    size_type = type(selected).__name__
+    if size_type == "PhotoSizeEmpty":
+        raise DownloadError("Telegram photo has no downloadable full-size image.")
+    if size_type == "PhotoSize":
+        size = selected.size
+    elif size_type == "PhotoSizeProgressive":
+        size = max(selected.sizes) if selected.sizes else None
+    elif size_type == "PhotoCachedSize":
+        size = len(selected.bytes)
+    elif size_type == "PhotoStrippedSize":
         photo_bytes = selected.bytes
         size = len(photo_bytes)
-        if type(selected).__name__ == "PhotoStrippedSize":
-            if len(photo_bytes) >= 3 and photo_bytes[0] == 1:
-                size += 622
-    if type(selected).__name__ == "PhotoSizeEmpty":
-        raise DownloadError("Telegram photo has no downloadable full-size image.")
-    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        if len(photo_bytes) >= 3 and photo_bytes[0] == 1:
+            size += 622
+    else:
         raise DownloadError(
-            "Telegram photo size cannot be verified; refusing to promote an unchecked file."
+            "Telegram photo size cannot be verified; refusing unchecked download."
+        )
+
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise DownloadError(
+            "Telegram photo size cannot be verified; refusing unchecked download."
         )
     return size
-
 
 _AUTH_ERROR_NAMES = {
     "AuthKeyUnregisteredError",
