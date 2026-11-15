@@ -21,6 +21,19 @@ class DownloadError(RuntimeError):
     """A user-facing download failure."""
 
 
+class AuthorizationRequiredError(DownloadError):
+    """The Telegram user session must be reauthorized before resuming."""
+
+
+_AUTH_ERROR_NAMES = {
+    "AuthKeyUnregisteredError",
+    "AuthKeyDuplicatedError",
+    "SessionRevokedError",
+    "UserDeactivatedError",
+    "UnauthorizedError",
+}
+
+
 class MediaDownloader:
     def __init__(
         self,
@@ -40,8 +53,15 @@ class MediaDownloader:
 
     async def download(self, link: MessageLink) -> list[Path]:
         async with self._semaphore:
-            entity = await self._resolve_entity(link)
-            message = await self.client.get_messages(entity, ids=link.message_id)
+            try:
+                entity = await self._resolve_entity(link)
+                message = await self.client.get_messages(entity, ids=link.message_id)
+            except Exception as exc:
+                if type(exc).__name__ in _AUTH_ERROR_NAMES:
+                    raise AuthorizationRequiredError(
+                        "Telegram account authorization is required. Run /auth to resume."
+                    ) from exc
+                raise
             if not message:
                 raise DownloadError(
                     "Message not found. It may have been deleted or is inaccessible."
@@ -154,6 +174,11 @@ class MediaDownloader:
             except DownloadError:
                 raise
             except Exception as exc:
+                if type(exc).__name__ in _AUTH_ERROR_NAMES:
+                    raise AuthorizationRequiredError(
+                        "Telegram account authorization expired during download. "
+                        "Run /auth; the partial file has been retained."
+                    ) from exc
                 if type(exc).__name__ in {
                     "FileReferenceExpiredError",
                     "FileReferenceInvalidError",
