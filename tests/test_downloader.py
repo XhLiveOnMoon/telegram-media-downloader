@@ -143,3 +143,37 @@ async def test_expired_file_reference_is_refreshed_before_resuming(tmp_path: Pat
 
     assert client.offsets == [0, 4096]
     assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
+
+
+
+@pytest.mark.asyncio
+async def test_auth_expiration_is_not_retried_as_network_error(tmp_path: Path):
+    message = make_message()
+
+    class AuthKeyUnregisteredError(Exception):
+        pass
+
+    class UnauthorizedClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.calls += 1
+            raise AuthKeyUnregisteredError("session revoked")
+            yield b""
+
+    from app.downloader import AuthorizationRequiredError
+
+    client = UnauthorizedClient()
+    downloader = MediaDownloader(
+        client,
+        tmp_path / "complete",
+        tmp_path / "incomplete",
+        max_network_retries=5,
+        retry_base_delay=0.001,
+    )
+
+    with pytest.raises(AuthorizationRequiredError, match="authorization expired"):
+        await downloader._download_one(message)
+
+    assert client.calls == 1
