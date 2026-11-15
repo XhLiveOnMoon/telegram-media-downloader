@@ -206,6 +206,9 @@ class BotService:
             if type(exc).__name__ in {
                 "TelegramNetworkError", "TelegramServerError", "ServerError",
                 "TimedOutError", "RpcCallFailError", "ConnectionError", "TimeoutError",
+                "ClientError", "ClientConnectionError", "ClientConnectorError",
+                "ClientOSError", "ClientPayloadError", "ServerDisconnectedError",
+                "ServerTimeoutError",
             }:
                 if self.worker and task.attempts >= self.worker.max_attempts:
                     await self._notify(
