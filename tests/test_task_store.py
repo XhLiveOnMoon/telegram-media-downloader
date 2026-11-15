@@ -46,6 +46,17 @@ def test_interrupted_tasks_can_be_recovered_and_marked_running(tmp_path: Path):
     assert "resumed" in recovered.detail.lower()
 
 
+def test_authorization_blocked_task_remains_interrupted(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+    task_id = store.create("message-link", "https://t.me/example/100")
+    store.interrupt(task_id, "Telegram authorization required")
+
+    [task] = store.interrupted()
+    assert task.task_id == task_id
+    assert task.status == "interrupted"
+    assert "authorization" in task.detail.lower()
+
+
 def test_sqlite_uses_wal_journal_mode(tmp_path: Path):
     database = tmp_path / "tasks.sqlite3"
     DownloadTaskStore(database)
