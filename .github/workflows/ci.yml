@@ -26,6 +26,8 @@ jobs:
         run: pytest -q
       - name: Compile
         run: python -m compileall -q app tests
+      - name: Import application modules
+        run: python -c "import app.bot, app.downloader, app.__main__"
 
   compose-config:
     runs-on: ubuntu-latest
