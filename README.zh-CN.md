@@ -122,6 +122,7 @@ docker compose logs -f
 - `/data/media/downloads/complete/telegram/`：已完成文件。
 - 容器以 UID/GID `1001:1001` 运行；完成文件权限为 `644`，部分文件为 `600`。
 - 服务只写入上述两个 Telegram 专用目录，不会写入 qBittorrent 等其他媒体目录。
+- 进程锁可防止多个实例同时使用同一份应用状态。
 - `DATA_DIR` 必须与共享下载挂载路径分离；下载目录必须是同一 downloads 根目录下的两个兄弟目录。
 
 ## 备份与恢复
@@ -180,6 +181,11 @@ docker compose build
 ```
 
 GitHub Actions 会执行 lint、单元测试、字节码编译、Compose 配置校验和镜像构建。测试使用 mock，不会执行真实 Telegram 登录或下载。
+
+## 安全
+
+- 妥善保管 `.env`、`data/telegram_user.session` 和状态备份。Session 可用于授权访问 Telegram 用户账号。
+- 不要公开登录消息、日志或状态文件。Bot 仅允许配置的用户 ID 在私聊中操作。
 
 ## 限制
 
