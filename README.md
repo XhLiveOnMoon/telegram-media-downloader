@@ -122,6 +122,7 @@ You can also send or forward a photo, document, video, audio, or voice message d
 - `/data/media/downloads/complete/telegram/`: completed downloads.
 - The container runs as UID/GID `1001:1001`; completed files use mode `644`, and partial files use mode `600`.
 - The service writes only to the two Telegram-specific directories; it does not write to qBittorrent or other media directories.
+- A process lock prevents multiple instances from sharing the same application state.
 - `DATA_DIR` must be separate from the shared downloads mount. The complete and incomplete directories must be sibling `telegram` directories under the same downloads root.
 
 ## Backup and restore
@@ -180,6 +181,11 @@ docker compose build
 ```
 
 GitHub Actions runs lint, unit tests, bytecode compilation, Compose validation, and image build. Tests use mocked Telegram clients; CI does not perform live Telegram login or downloads.
+
+## Security
+
+- Keep `.env`, `data/telegram_user.session`, and state backups private. The Session can authorize access to the Telegram user account.
+- Do not share login messages, logs, or state files. The Bot is restricted to the configured owner ID and private chats.
 
 ## Limitations
 
