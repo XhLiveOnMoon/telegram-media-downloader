@@ -761,6 +761,59 @@ async def test_help_and_command_usage_escape_html_placeholders(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tasks_disables_link_previews_and_keeps_links(monkeypatch):
+    from types import SimpleNamespace
+
+    from aiogram.types import LinkPreviewOptions
+
+    import app.bot as bot_module
+
+    class TaskStore:
+        def recent(self, limit):
+            assert limit == 10
+            return [
+                SimpleNamespace(
+                    task_id=1,
+                    task_type="message-link",
+                    source="https://t.me/example/123",
+                    status="queued",
+                    detail="",
+                    attempts=0,
+                    next_attempt_at=None,
+                    total_bytes=0,
+                    progress_bytes=0,
+                    current_file=None,
+                )
+            ]
+
+    class Service:
+        tasks = TaskStore()
+
+        def is_owner(self, message):
+            return True
+
+    class FakeMessage:
+        from_user = SimpleNamespace(id=123456)
+
+        def __init__(self):
+            self.answers = []
+
+        async def answer(self, text, **kwargs):
+            self.answers.append((text, kwargs))
+
+    monkeypatch.setattr(bot_module, "get_service", lambda: Service())
+    message = FakeMessage()
+
+    await bot_module.tasks(message)
+
+    assert len(message.answers) == 1
+    text, kwargs = message.answers[0]
+    assert "https://t.me/example/123" in text
+    assert isinstance(kwargs["link_preview_options"], LinkPreviewOptions)
+    assert kwargs["link_preview_options"].is_disabled is True
+
+
+@pytest.mark.asyncio
 async def test_cancelled_phone_request_cannot_restore_auth_fsm(tmp_path: Path, monkeypatch):
     import asyncio
     from types import SimpleNamespace
