@@ -13,7 +13,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, LinkPreviewOptions, Message
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 
@@ -488,7 +488,10 @@ async def tasks(message: Message) -> None:
             f"#{record.task_id} [{record.status}] {record.task_type} "
             f"attempts={record.attempts}{retry}{progress}: {source}{detail}"
         )
-    await message.answer("\n".join(lines))
+    await message.answer(
+        "\n".join(lines),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 @router.message(F.chat.type == "private", Command("auth"))
