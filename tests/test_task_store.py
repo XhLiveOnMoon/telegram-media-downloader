@@ -430,3 +430,43 @@ def test_enqueue_with_status_reports_reused_and_created_tasks(tmp_path: Path):
     assert duplicate_created is False
     assert duplicate_id == first_id
     assert len(store.recent()) == 1
+
+
+def test_clear_history_deletes_only_terminal_records(tmp_path: Path):
+    store = DownloadTaskStore(tmp_path / "tasks.sqlite3")
+
+    completed_id = store.enqueue("message-link", "https://t.me/example/completed")
+    assert store.claim_next().task_id == completed_id
+    store.complete(completed_id, "completed.bin")
+
+    failed_id = store.enqueue("message-link", "https://t.me/example/failed")
+    assert store.claim_next().task_id == failed_id
+    store.fail(failed_id, "permanent failure")
+
+    cancelled_id = store.enqueue("message-link", "https://t.me/example/cancelled")
+    assert store.cancel(cancelled_id) is True
+
+    queued_id = store.enqueue("message-link", "https://t.me/example/queued")
+
+    retry_id = store.enqueue("message-link", "https://t.me/example/retry")
+    assert store.claim_next().task_id == retry_id
+    store.retry_later(retry_id, "temporary failure", delay_seconds=3600)
+
+    interrupted_id = store.enqueue("message-link", "https://t.me/example/interrupted")
+    assert store.claim_next().task_id == interrupted_id
+    store.interrupt(interrupted_id, "worker interrupted")
+
+    auth_id = store.enqueue("message-link", "https://t.me/example/auth")
+    assert store.claim_next().task_id == auth_id
+    store.require_auth(auth_id, "authorization required")
+
+    assert store.clear_history() == 3
+    assert store.clear_history() == 0
+
+    remaining = {task.task_id: task.status for task in store.recent(limit=50)}
+    assert remaining == {
+        queued_id: "queued",
+        retry_id: "retry_wait",
+        interrupted_id: "interrupted",
+        auth_id: "auth_required",
+    }
