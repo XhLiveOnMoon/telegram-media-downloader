@@ -702,3 +702,41 @@ async def test_transient_error_message_is_not_exposed_to_user(tmp_path: Path):
 
     assert secret not in str(caught.value)
     assert "ConnectionError" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_stalled_download_times_out_and_resumes_from_saved_partial(
+    tmp_path: Path, monkeypatch
+):
+    import app.downloader as downloader_module
+
+    monkeypatch.setattr(downloader_module, "_NO_PROGRESS_TIMEOUT_SECONDS", 0.01)
+    message = make_message()
+
+    class StallingThenResumingClient:
+        def __init__(self):
+            self.offsets = []
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.offsets.append(offset)
+            if len(self.offsets) == 1:
+                yield b"a" * 4096
+                await asyncio.sleep(1)
+            else:
+                yield b"b" * (8192 - offset)
+
+    import asyncio
+
+    client = StallingThenResumingClient()
+    downloader = MediaDownloader(
+        client,
+        tmp_path / "complete",
+        tmp_path / "incomplete",
+        max_network_retries=1,
+        retry_base_delay=0.001,
+    )
+
+    result = await downloader._download_one(message)
+
+    assert client.offsets == [0, 4096]
+    assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
