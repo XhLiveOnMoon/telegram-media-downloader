@@ -460,3 +460,12 @@ class DownloadTaskStore:
                 (max(1, min(limit, 50)),),
             ).fetchall()
         return [self._task(row) for row in rows]
+
+    def clear_history(self) -> int:
+        """Delete terminal task records without touching active/recoverable work."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM download_tasks WHERE status IN ('completed','failed','cancelled')"
+            )
+            return cursor.rowcount
+
