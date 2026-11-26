@@ -450,13 +450,13 @@ def test_clear_history_deletes_only_terminal_records(tmp_path: Path):
     assert store.claim_next().task_id == retry_id
     store.retry_later(retry_id, "temporary failure", delay_seconds=3600)
 
-    interrupted_id = store.enqueue("message-link", "https://t.me/example/interrupted")
-    assert store.claim_next().task_id == interrupted_id
-    store.interrupt(interrupted_id, "worker interrupted")
-
     auth_id = store.enqueue("message-link", "https://t.me/example/auth")
     assert store.claim_next().task_id == auth_id
     store.require_auth(auth_id, "authorization required")
+
+    interrupted_id = store.enqueue("message-link", "https://t.me/example/interrupted")
+    assert store.claim_next().task_id == interrupted_id
+    store.interrupt(interrupted_id, "worker interrupted")
 
     queued_id = store.enqueue("message-link", "https://t.me/example/queued")
 
