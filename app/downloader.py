@@ -5,6 +5,7 @@ import errno
 import logging
 import os
 import sqlite3
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -17,7 +18,9 @@ from .links import MessageLink
 from .storage import safe_filename, stable_partial_path
 
 logger = logging.getLogger(__name__)
-_CHECKPOINT_BYTES = 8 * 1024 * 1024
+_CHECKPOINT_BYTES = 1024 * 1024
+_CHECKPOINT_INTERVAL_SECONDS = 10.0
+_NO_PROGRESS_TIMEOUT_SECONDS = 60.0
 ProgressCallback = Callable[[int, int | None, str], None]
 _TRANSIENT_ERROR_NAMES = {
     "ClientError", "ClientConnectionError", "ClientConnectorError", "ClientOSError",
@@ -311,24 +314,53 @@ class MediaDownloader:
                     with partial.open("ab") as stream:
                         os.chmod(partial, 0o600)
                         since_checkpoint = 0
+                        last_checkpoint = time.monotonic()
                         downloaded = offset
+                        iterator = self.client.iter_download(
+                            message.media,
+                            offset=offset,
+                            request_size=512 * 1024,
+                            chunk_size=512 * 1024,
+                        )
                         try:
-                            async for chunk in self.client.iter_download(
-                                message.media,
-                                offset=offset,
-                                request_size=512 * 1024,
-                                chunk_size=512 * 1024,
-                            ):
+                            while True:
+                                try:
+                                    chunk = await asyncio.wait_for(
+                                        iterator.__anext__(),
+                                        timeout=_NO_PROGRESS_TIMEOUT_SECONDS,
+                                    )
+                                except StopAsyncIteration:
+                                    break
+                                except asyncio.TimeoutError as timeout_exc:
+                                    # Stop the old Telethon request iterator before resuming
+                                    # from the durable partial-file offset.
+                                    close = getattr(iterator, "close", None)
+                                    if close is None:
+                                        close = getattr(iterator, "aclose", None)
+                                    if close is not None:
+                                        result = close()
+                                        if hasattr(result, "__await__"):
+                                            await result
+                                    raise ConnectionError(
+                                        "No download data received for "
+                                        f"{_NO_PROGRESS_TIMEOUT_SECONDS:.0f} seconds."
+                                    ) from timeout_exc
+
                                 stream.write(chunk)
                                 downloaded += len(chunk)
                                 since_checkpoint += len(chunk)
-                                if since_checkpoint >= _CHECKPOINT_BYTES:
+                                now = time.monotonic()
+                                if (
+                                    since_checkpoint >= _CHECKPOINT_BYTES
+                                    or now - last_checkpoint >= _CHECKPOINT_INTERVAL_SECONDS
+                                ):
                                     stream.flush()
                                     os.fsync(stream.fileno())
                                     self._report_progress(
                                         progress_callback, downloaded, size, filename
                                     )
                                     since_checkpoint = 0
+                                    last_checkpoint = now
                         finally:
                             # Persist every yielded byte before retrying or propagating errors.
                             stream.flush()
