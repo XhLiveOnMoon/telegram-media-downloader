@@ -446,8 +446,6 @@ def test_clear_history_deletes_only_terminal_records(tmp_path: Path):
     cancelled_id = store.enqueue("message-link", "https://t.me/example/cancelled")
     assert store.cancel(cancelled_id) is True
 
-    queued_id = store.enqueue("message-link", "https://t.me/example/queued")
-
     retry_id = store.enqueue("message-link", "https://t.me/example/retry")
     assert store.claim_next().task_id == retry_id
     store.retry_later(retry_id, "temporary failure", delay_seconds=3600)
@@ -459,6 +457,8 @@ def test_clear_history_deletes_only_terminal_records(tmp_path: Path):
     auth_id = store.enqueue("message-link", "https://t.me/example/auth")
     assert store.claim_next().task_id == auth_id
     store.require_auth(auth_id, "authorization required")
+
+    queued_id = store.enqueue("message-link", "https://t.me/example/queued")
 
     assert store.clear_history() == 3
     assert store.clear_history() == 0
