@@ -1,3 +1,4 @@
+import asyncio
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -724,8 +725,6 @@ async def test_stalled_download_times_out_and_resumes_from_saved_partial(
                 await asyncio.sleep(1)
             else:
                 yield b"b" * (8192 - offset)
-
-    import asyncio
 
     client = StallingThenResumingClient()
     downloader = MediaDownloader(
