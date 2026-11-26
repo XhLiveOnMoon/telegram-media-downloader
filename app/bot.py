@@ -419,6 +419,7 @@ async def start(message: Message) -> None:
         "/download &lt;message link&gt; — queue a download\n"
         "/status — show service status\n"
         "/tasks — show recent download tasks\n"
+        "/clear — clear terminal download history (confirmation required)\n"
         "/retry &lt;task_id&gt; — retry a failed or cancelled task\n"
         "/cancel [task_id] — cancel a task or the current interaction"
     )
@@ -492,6 +493,25 @@ async def tasks(message: Message) -> None:
         "\n".join(lines),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
+
+
+
+@router.message(F.chat.type == "private", Command("clear"))
+async def clear_history(message: Message, command: CommandObject) -> None:
+    svc = get_service()
+    if not svc.is_owner(message):
+        return
+    if (command.args or "").strip().lower() != "confirm":
+        await message.answer(
+            "确认清除历史下载记录？\\n"
+            "将删除已完成、已失败和已取消的任务记录。\\n"
+            "排队中、下载中、等待重试、等待授权及中断待恢复的任务会保留。\\n"
+            "不会删除任何已下载或未完成的媒体文件。\\n\\n"
+            "确认执行请发送：/clear confirm"
+        )
+        return
+    deleted = svc.tasks.clear_history()
+    await message.answer(f"历史下载记录清理完成，共删除 {deleted} 条记录；媒体文件未删除。")
 
 
 @router.message(F.chat.type == "private", Command("auth"))
