@@ -81,6 +81,7 @@ docker compose logs -f
 | `/download <message-link>` | 将消息链接加入下载队列 |
 | `/status` | 查看 Bot、账号授权、活动任务和全局冷却状态 |
 | `/tasks` | 查看最近 10 个任务及进度、重试信息 |
+| `/clear` | 查看历史记录清理说明；发送 `/clear confirm` 二次确认清理已完成、失败和取消的任务记录（不删除媒体文件，保留所有未结束任务） |
 | `/retry <task_id>` | 重新加入已失败或已取消的任务 |
 | `/cancel <task_id>` | 取消排队中或正在执行的任务 |
 | `/cancel` | 取消当前授权交互 |
