@@ -81,6 +81,7 @@ Open a private chat with the Bot and send `/start`. Run `/auth` to authorize the
 | `/download <message-link>` | Queue a message-link download |
 | `/status` | Show Bot, account authorization, active-task, and global cooldown status |
 | `/tasks` | Show the latest 10 tasks, progress, and retry information |
+| `/clear` | Review history cleanup details; send `/clear confirm` to delete completed, failed, and cancelled task records (media files are not deleted; all non-terminal tasks are preserved) |
 | `/retry <task_id>` | Requeue a failed or cancelled task |
 | `/cancel <task_id>` | Cancel a queued or active task |
 | `/cancel` | Cancel the current authorization interaction |
