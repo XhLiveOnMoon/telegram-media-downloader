@@ -94,6 +94,7 @@ You can also send or forward a photo, document, video, audio, or voice message d
 
 - Supports public and private message links. The authorized user account must be able to access private channels or groups.
 - A link to an album downloads its media items.
+- Broadcast-channel message links download video media only; photos and image files are skipped. Group links and direct Bot media keep their existing behavior.
 - Downloads use the Telethon user account and are not subject to the standard Bot API 20 MB download limit.
 - Partial files remain in `incomplete/telegram`; retries resume from the last 4 KiB-aligned offset.
 - The media size is verified before an atomic move into `complete/telegram`.
