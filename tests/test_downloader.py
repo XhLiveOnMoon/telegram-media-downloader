@@ -739,3 +739,149 @@ async def test_stalled_download_times_out_and_resumes_from_saved_partial(
 
     assert client.offsets == [0, 4096]
     assert result.read_bytes() == b"a" * 4096 + b"b" * 4096
+
+
+@pytest.mark.asyncio
+async def test_channel_album_downloads_videos_and_skips_photos(tmp_path: Path):
+    from app.links import MessageLink
+
+    class PhotoSize:
+        size = 4096
+
+    photo = SimpleNamespace(
+        id=9101,
+        peer_id=PeerChannel(123456),
+        media=object(),
+        photo=SimpleNamespace(id=9101, sizes=[PhotoSize()]),
+        document=None,
+        grouped_id=77,
+    )
+    video_media = object()
+    video = SimpleNamespace(
+        id=42,
+        peer_id=PeerChannel(123456),
+        media=video_media,
+        photo=None,
+        document=SimpleNamespace(
+            id=9102,
+            size=4096,
+            mime_type="video/mp4",
+            attributes=[SimpleNamespace(file_name="clip.mp4")],
+        ),
+        grouped_id=77,
+    )
+
+    class Channel:
+        broadcast = True
+
+    class ChannelClient:
+        def __init__(self):
+            self.downloaded_media = []
+
+        async def get_entity(self, username):
+            return Channel()
+
+        async def get_messages(self, entity, ids):
+            if isinstance(ids, int):
+                return video
+            return [photo, video]
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.downloaded_media.append(media)
+            yield b"v" * 4096
+
+    client = ChannelClient()
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+
+    results = await downloader.download(
+        MessageLink(kind="public", username="example", message_id=42)
+    )
+
+    assert len(results) == 1
+    assert results[0].name.endswith("clip.mp4")
+    assert results[0].read_bytes() == b"v" * 4096
+    assert client.downloaded_media == [video_media]
+
+
+@pytest.mark.asyncio
+async def test_channel_image_only_message_is_rejected_without_download(tmp_path: Path):
+    from app.links import MessageLink
+
+    class PhotoSize:
+        size = 4096
+
+    photo = SimpleNamespace(
+        id=43,
+        peer_id=PeerChannel(123456),
+        media=object(),
+        photo=SimpleNamespace(id=9103, sizes=[PhotoSize()]),
+        document=None,
+        grouped_id=None,
+    )
+
+    class Channel:
+        broadcast = True
+
+    class ChannelClient:
+        download_calls = 0
+
+        async def get_entity(self, username):
+            return Channel()
+
+        async def get_messages(self, entity, ids):
+            return photo
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            self.download_calls += 1
+            yield b"x" * 4096
+
+    client = ChannelClient()
+    downloader = MediaDownloader(client, tmp_path / "complete", tmp_path / "incomplete")
+
+    with pytest.raises(DownloadError, match="No video media found"):
+        await downloader.download(
+            MessageLink(kind="public", username="example", message_id=43)
+        )
+
+    assert client.download_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_group_message_keeps_existing_photo_download_behavior(tmp_path: Path):
+    from app.links import MessageLink
+
+    class PhotoSize:
+        size = 4096
+
+    photo = SimpleNamespace(
+        id=44,
+        peer_id=PeerChannel(123456),
+        media=object(),
+        photo=SimpleNamespace(id=9104, sizes=[PhotoSize()]),
+        document=None,
+        grouped_id=None,
+    )
+
+    class Group:
+        broadcast = False
+
+    class GroupClient:
+        async def get_entity(self, username):
+            return Group()
+
+        async def get_messages(self, entity, ids):
+            return photo
+
+        async def iter_download(self, media, *, offset, request_size, chunk_size):
+            yield b"p" * 4096
+
+    downloader = MediaDownloader(
+        GroupClient(), tmp_path / "complete", tmp_path / "incomplete"
+    )
+
+    results = await downloader.download(
+        MessageLink(kind="public", username="example", message_id=44)
+    )
+
+    assert len(results) == 1
+    assert results[0].name.endswith("telegram-44.jpg")
