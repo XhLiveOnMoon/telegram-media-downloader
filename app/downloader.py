@@ -48,6 +48,32 @@ def media_identity(message) -> str:
     )
 
 
+
+def is_video_message(message) -> bool:
+    """Return whether a Telegram document represents a video file."""
+    if getattr(message, "photo", None) is not None:
+        return False
+    document = getattr(message, "document", None)
+    if document is None:
+        return False
+
+    mime_type = (getattr(document, "mime_type", None) or "").lower()
+    if mime_type.startswith("video/"):
+        return True
+
+    video_extensions = {
+        ".3gp", ".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov",
+        ".mp4", ".mpeg", ".mpg", ".mts", ".ts", ".webm", ".wmv",
+    }
+    for attribute in getattr(document, "attributes", ()):
+        if type(attribute).__name__ == "DocumentAttributeVideo":
+            return True
+        filename = getattr(attribute, "file_name", None)
+        if filename and Path(filename).suffix.lower() in video_extensions:
+            return True
+    return False
+
+
 def is_transient_transport_error(exc: Exception) -> bool:
     """Classify recognizable network failures without retrying arbitrary programming errors."""
     if isinstance(exc, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
@@ -170,6 +196,14 @@ class MediaDownloader:
                 raise DownloadError(
                     "This Telegram message is protected from forwarding/downloading."
                 )
+            if getattr(entity, "broadcast", False):
+                media_messages = [
+                    item for item in media_messages if is_video_message(item)
+                ]
+                if not media_messages:
+                    raise DownloadError(
+                        "No video media found in this channel message or album."
+                    )
             results: list[Path] = []
             for item in media_messages:
                 results.append(
